@@ -488,46 +488,57 @@ REWRITER_PROMPT = """당신은 검색 쿼리 최적화 전문가입니다.
 
 ## 5. 전체 통합: `main.py`
 
-### 5.1 통합 실행 흐름
+### 5.1 통합 실행 흐름 (Phase 1~4 전체)
 
 ```mermaid
 flowchart TD
     Start["main.py 실행"]
 
-    Start --> Init["초기화<br/>- ChromaDB 연결<br/>- Agent/Router/Grader 인스턴스 생성"]
+    Start --> Init["초기화<br/>- Agent/Router/Planner/Grader/HITL 인스턴스 생성"]
 
     Init --> InputLoop["사용자 입력 대기<br/>(while True)"]
 
     InputLoop --> GetQuery["질문 입력 받기"]
 
-    GetQuery --> Route["Router.classify(query)"]
+    GetQuery --> Route["Phase 2: Router.classify(query)"]
 
     Route --> Switch{"라우팅 결과"}
 
     Switch -->|"CHITCHAT"| DirectLLM["LLM 직접 답변"]
-    Switch -->|"INTERNAL_SEARCH"| VectorSearch["Agent.run(query)<br/>도구: search_vector_db"]
-    Switch -->|"WEB_SEARCH"| WebSearch["Agent.run(query)<br/>도구: web_search"]
+    Switch -->|"INTERNAL_SEARCH<br/>WEB_SEARCH"| Plan["Phase 2.5: Planner.plan(query)"]
 
-    VectorSearch --> GradeCheck["Grader.evaluate(query, docs)"]
-    WebSearch --> GradeCheck
+    Plan --> Search["Phase 1: Agent.search(plan.search_queries)"]
+
+    Search --> GradeCheck["Phase 3: Grader.evaluate(query, docs)"]
 
     GradeCheck --> GradeResult{"평가 결과"}
 
-    GradeResult -->|"PASS"| Generate["답변 생성"]
+    GradeResult -->|"PASS"| CalcConf["신뢰도 점수 계산"]
     GradeResult -->|"FAIL"| Rewrite["QueryRewriter.rewrite(query)"]
 
     Rewrite --> RetrySearch["재검색 (1회)"]
-    RetrySearch --> Generate
+    RetrySearch --> CalcConf
 
-    DirectLLM --> Output["답변 출력"]
-    Generate --> Output
+    CalcConf --> HITL["Phase 4: HITL.request_review(context)"]
 
-    Output --> InputLoop
+    HITL -->|"승인"| Output["답변 출력"]
+    HITL -->|"수정"| Output
+    HITL -->|"재검색"| Search
+    HITL -->|"거부"| RejectMsg["거부 메시지 출력"]
+
+    DirectLLM --> Output
+    RejectMsg --> Feedback
+
+    Output --> Feedback["HITL #4: 사후 피드백 수집 (👍/👎)"]
+
+    Feedback --> InputLoop
 
     style Start fill:#4CAF50,color:#fff
     style Route fill:#2196F3,color:#fff
+    style Plan fill:#E91E63,color:#fff
     style GradeCheck fill:#FF9800,color:#fff
-    style Output fill:#9C27B0,color:#fff
+    style HITL fill:#9C27B0,color:#fff
+    style Output fill:#607D8B,color:#fff
 ```
 
 ### 5.2 통합 코드 스케치
@@ -536,20 +547,30 @@ flowchart TD
 """
 main.py - Simple Agentic RAG 진입점
 
-Phase 1~3을 모두 통합한 최종 실행 파일이다.
+Phase 1~4를 모두 통합한 최종 실행 파일이다.
+- Phase 1: 네이티브 Tool Calling
+- Phase 2: Router 패턴
+- Phase 2.5: Query Planner
+- Phase 3: 단일 피드백 루프 (CRAG)
+- Phase 4: Human in the Loop
 """
 
 from agent import AgentCore
 from router import Router
+from planner import QueryPlanner
 from grader import Grader, QueryRewriter
+from hitl import HITLManager, HITLContext, FeedbackStore
 from config import Config
 
 def main():
     config = Config()
     agent = AgentCore(config)
     router = Router()
+    planner = QueryPlanner()
     grader = Grader()
     rewriter = QueryRewriter()
+    hitl = HITLManager(mode=config.hitl_mode)  # "auto" / "strict" / "off"
+    feedback_store = FeedbackStore()
 
     conversation_history = []
 
@@ -566,17 +587,42 @@ def main():
 
         if route == "CHITCHAT":
             answer = agent.direct_answer(query, conversation_history)
+            print(f"\n[봇] {answer}")
         else:
-            # Phase 1: Tool Calling 기반 검색
+            # Phase 2.5: 질의 분석 & 최적화
+            plan = planner.plan(query, route, conversation_history)
+            print(f"  [플래닝] 의도: {plan.intent}")
+            print(f"  [플래닝] 검색어: {plan.search_queries}")
+
             tool_filter = (
                 "search_vector_db" if route == "INTERNAL_SEARCH"
                 else "web_search"
             )
-            answer, documents = agent.search_and_answer(
-                query, conversation_history, tool_filter
-            )
+
+            # Phase 1: Tool Calling 기반 검색 (최적화된 쿼리 사용)
+            if plan.is_multi():
+                all_documents = []
+                for sq in plan.search_queries:
+                    _, docs = agent.search_and_answer(
+                        sq, conversation_history, tool_filter
+                    )
+                    all_documents.extend(docs)
+                # 중복 제거
+                seen = set()
+                documents = []
+                for doc in all_documents:
+                    key = doc["content"][:100]
+                    if key not in seen:
+                        seen.add(key)
+                        documents.append(doc)
+                answer = agent.generate_from_docs(query, documents)
+            else:
+                answer, documents = agent.search_and_answer(
+                    plan.search_queries[0], conversation_history, tool_filter
+                )
 
             # Phase 3: 검색 결과 평가
+            retry_count = 0
             if documents:
                 grade = grader.evaluate(query, documents)
                 print(f"  [평가] {grade}")
@@ -584,16 +630,52 @@ def main():
                 if grade == "FAIL":
                     rewritten = rewriter.rewrite(query)
                     print(f"  [재작성] {rewritten}")
-                    answer, _ = agent.search_and_answer(
+                    answer, documents = agent.search_and_answer(
                         rewritten, conversation_history, tool_filter
                     )
+                    retry_count = 1
+                    grade = "PASS"  # 재검색 후 강제 진행
 
-        print(f"\n[봇] {answer}")
+            # Phase 4: Human in the Loop
+            confidence = hitl.calculator.calculate(
+                grader_result=grade if documents else "PASS",
+                vector_scores=[d.get("distance", 0) for d in documents],
+                retry_count=retry_count
+            )
+
+            context = HITLContext(
+                query=query, answer=answer,
+                confidence=confidence, documents=documents,
+                route=route, search_queries=plan.search_queries
+            )
+
+            decision = hitl.request_review(context)
+
+            if decision.action == "approve":
+                final_answer = answer
+            elif decision.action == "edit":
+                final_answer = decision.edited_answer
+            elif decision.action == "retry":
+                final_answer, _ = agent.search_and_answer(
+                    decision.new_query, conversation_history, tool_filter
+                )
+            elif decision.action == "reject":
+                final_answer = "답변이 거부되었습니다. 다른 방법으로 질문해 주세요."
+            else:
+                final_answer = answer
+
+            print(f"\n[봇] {final_answer}")
+            answer = final_answer
 
         # 대화 히스토리 관리 (최근 10턴)
         conversation_history.append({"role": "user", "content": query})
         conversation_history.append({"role": "assistant", "content": answer})
         conversation_history = conversation_history[-20:]  # 10턴 = 20개 메시지
+
+        # 사후 피드백 수집
+        feedback = hitl.collect_feedback(query, answer)
+        if feedback:
+            feedback_store.save(feedback)
 
 if __name__ == "__main__":
     main()
@@ -717,30 +799,33 @@ if __name__ == "__main__":
 graph TD
     subgraph "단위 테스트 (Unit Tests)"
         UT1["test_router.py<br/>라우터 분류 정확도"]
-        UT2["test_grader.py<br/>평가기 판단 정확도"]
-        UT3["test_tools.py<br/>도구 실행 정상 동작"]
+        UT2["test_planner.py<br/>쿼리 플래너 최적화"]
+        UT3["test_grader.py<br/>평가기 판단 정확도"]
+        UT4["test_tools.py<br/>도구 실행 정상 동작"]
+        UT5["test_hitl.py<br/>HITL 신뢰도 계산"]
     end
 
     subgraph "통합 테스트 (Integration Tests)"
         IT1["test_agent.py<br/>에이전트 전체 루프"]
         IT2["test_ingest.py<br/>인제스트 파이프라인"]
+        IT3["test_feedback.py<br/>피드백 저장/조회"]
     end
 
     subgraph "E2E 테스트"
         E2E["test_e2e.py<br/>질문→답변 전체 흐름"]
     end
 
-    UT1 --> IT1
-    UT2 --> IT1
-    UT3 --> IT1
-    IT1 --> E2E
-    IT2 --> E2E
+    UT1 & UT2 & UT3 & UT4 & UT5 --> IT1
+    IT1 & IT2 & IT3 --> E2E
 
     style UT1 fill:#4CAF50,color:#fff
     style UT2 fill:#4CAF50,color:#fff
     style UT3 fill:#4CAF50,color:#fff
+    style UT4 fill:#4CAF50,color:#fff
+    style UT5 fill:#4CAF50,color:#fff
     style IT1 fill:#2196F3,color:#fff
     style IT2 fill:#2196F3,color:#fff
+    style IT3 fill:#2196F3,color:#fff
     style E2E fill:#FF9800,color:#fff
 ```
 
@@ -751,17 +836,24 @@ graph TD
 | Router - 사내 문서 | "휴가 신청 방법 알려줘" | `INTERNAL_SEARCH` |
 | Router - 웹 검색 | "오늘 서울 날씨 어때?" | `WEB_SEARCH` |
 | Router - 잡담 | "안녕하세요!" | `CHITCHAT` |
+| Planner - 맥락 해소 | "그거 다시 알려줘" (이전: 휴가) | 쿼리에 "휴가" 포함 |
+| Planner - 복합 질문 | "휴가 규정이랑 출장비" | `strategy: MULTI`, 쿼리 2개 |
+| Planner - 쿼리 최적화 | "어떻게 하면 돼?" | 명사구 중심 쿼리 변환 |
 | Grader - 관련 문서 | 질문과 관련된 문서 제공 | `PASS` |
 | Grader - 무관 문서 | 질문과 무관한 문서 제공 | `FAIL` |
 | Rewriter | "회사에서 연차 쓰려면?" | 핵심 키워드 포함 쿼리 |
+| HITL - HIGH 신뢰도 | confidence=0.9 | `should_intervene() == "none"` |
+| HITL - LOW 신뢰도 | confidence=0.3 | `should_intervene() == "hard"` |
+| HITL - 신뢰도 계산 | PASS, 유사도 0.8, 재시도 0 | confidence >= 0.7 |
 | Agent - 도구 호출 | 사내 문서 질문 | `search_vector_db` 호출됨 |
 | Agent - 직접 답변 | "1+1은?" | 도구 미호출, 직접 답변 |
+| Feedback - 저장 | 긍정 피드백 | JSONL에 정상 기록 |
 
 ---
 
 ## 8. 구현 체크리스트
 
-### Phase 1
+### Phase 1: 네이티브 Tool Calling
 
 - [ ] 프로젝트 초기 설정 (`requirements.txt`, `.env`, `.gitignore`)
 - [ ] `config.py` - 설정 관리 모듈
@@ -772,18 +864,33 @@ graph TD
 - [ ] `main.py` - 기본 CLI 인터페이스
 - [ ] Phase 1 테스트 작성 및 통과
 
-### Phase 2
+### Phase 2: Router 패턴
 
 - [ ] `prompts/router.py` - 라우터 프롬프트
 - [ ] `router.py` - 라우터 구현
 - [ ] `main.py` 에 라우터 통합
 - [ ] Phase 2 테스트 작성 및 통과
 
-### Phase 3
+### Phase 2.5: Query Planner
+
+- [ ] `prompts/planner.py` - 플래너 프롬프트
+- [ ] `planner.py` - Query Planner 구현 (맥락 해소, 쿼리 최적화, 복합 질문 분해)
+- [ ] `main.py` 에 플래너 통합 (SINGLE/MULTI 전략 처리)
+- [ ] Phase 2.5 테스트 작성 및 통과
+
+### Phase 3: 단일 피드백 루프
 
 - [ ] `prompts/grader.py` - 평가 프롬프트
 - [ ] `prompts/rewriter.py` - 재작성 프롬프트
 - [ ] `grader.py` - 평가기 및 재작성기 구현
 - [ ] `main.py` 에 피드백 루프 통합
 - [ ] Phase 3 테스트 작성 및 통과
-- [ ] E2E 테스트 작성 및 통과
+
+### Phase 4: Human in the Loop
+
+- [ ] `hitl.py` - HITL 관리자, 신뢰도 계산기, 피드백 수집기
+- [ ] `hitl.py` - FeedbackStore (JSONL 저장/조회)
+- [ ] `config.py` 에 HITL 모드 설정 추가 (`auto`/`strict`/`off`)
+- [ ] `main.py` 에 HITL 통합 (신뢰도 계산 → 검토 요청 → 피드백 수집)
+- [ ] Phase 4 테스트 작성 및 통과
+- [ ] E2E 테스트 작성 및 통과 (전체 Phase 1~4 통합)

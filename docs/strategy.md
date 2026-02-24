@@ -28,9 +28,9 @@
 
 ---
 
-## 2. 3단계 구현 전략
+## 2. 단계별 구현 전략
 
-프로젝트는 아래 3단계로 **점진적**으로 구현한다. 각 단계는 독립적으로 동작 가능하며, 이전 단계 위에 쌓아올리는 구조이다.
+프로젝트는 아래 **5단계**로 **점진적**으로 구현한다. 각 단계는 독립적으로 동작 가능하며, 이전 단계 위에 쌓아올리는 구조이다.
 
 ```mermaid
 graph LR
@@ -40,15 +40,23 @@ graph LR
     subgraph "Phase 2"
         B["Router 패턴 도입<br/>의도 분류 + 경로 분기"]
     end
+    subgraph "Phase 2.5"
+        B5["Query Planner<br/>질의 분석 & 최적화"]
+    end
     subgraph "Phase 3"
         C["단일 피드백 루프<br/>자가 평가 + 재검색"]
     end
+    subgraph "Phase 4"
+        D["Human in the Loop<br/>신뢰도 기반 사람 개입"]
+    end
 
-    A -->|"안정화 후"| B -->|"안정화 후"| C
+    A -->|"안정화 후"| B -->|"안정화 후"| B5 -->|"안정화 후"| C -->|"안정화 후"| D
 
     style A fill:#4CAF50,color:#fff
     style B fill:#2196F3,color:#fff
+    style B5 fill:#E91E63,color:#fff
     style C fill:#FF9800,color:#fff
+    style D fill:#9C27B0,color:#fff
 ```
 
 ### Phase 1: 네이티브 Tool Calling 기반 RAG
@@ -67,6 +75,16 @@ graph LR
 - `[사내 문서 검색]`, `[외부 웹 검색]`, `[단순 대화]` 3가지 경로로 분류
 - 에이전트의 도구 선택 환각(Hallucination) 방지
 
+### Phase 2.5: Query Planner (질의 분석 & 최적화)
+
+> **목표**: 검색 전 쿼리를 분석/최적화하여 1차 검색 적중률 극대화
+
+- **질의 해석**: 사용자 질문의 진짜 의도를 파악
+- **맥락 해소**: 대화 히스토리에서 대명사/생략어 복원 ("그거" → 이전 질문 맥락)
+- **쿼리 최적화**: 구어체 → 벡터 검색에 최적화된 키워드 중심 명사구 변환
+- **복합 질문 분해**: 여러 주제 질문을 최대 2개 서브쿼리로 분리 (MULTI 전략)
+- 상세 설계: [Query Planner 설계 문서](./query-planner.md)
+
 ### Phase 3: 단일 피드백 루프 (CRAG 간소화)
 
 > **목표**: 검색 결과를 자가 평가하고, 필요 시 1회 재검색하는 자기 교정(Self-Corrective) 메커니즘 추가
@@ -74,6 +92,17 @@ graph LR
 - Retrieve → Grade → Generate/Rewrite 3단계 상태 머신
 - 최대 재시도 1회로 제한하여 무한 루프 방지
 - 신뢰할 수 없는 답변 생성 최소화
+
+### Phase 4: Human in the Loop (HITL)
+
+> **목표**: 에이전트의 신뢰도가 낮을 때 사람에게 판단을 위임하고, 피드백을 통해 지속적으로 품질을 개선
+
+- **신뢰도 기반 자동 트리거**: 벡터 유사도, Grader 결과, 재검색 여부를 종합하여 0~1 점수 산출
+- **3단계 개입 수준**: HIGH(자동 통과) / MEDIUM(경고+자동 승인) / LOW(필수 검토)
+- **사용자 액션**: 승인 / 수정 / 재검색 / 거부
+- **사후 피드백 수집**: 모든 답변 후 비차단 방식으로 (thumbs up/down) 피드백 수집 → JSONL 저장
+- **3가지 운영 모드**: `auto`(기본) / `strict`(모든 검색에 필수 검토) / `off`(비활성화)
+- 상세 설계: [Human in the Loop 설계 문서](./human-in-the-loop.md)
 
 ---
 
@@ -122,41 +151,50 @@ graph TD
 
 ```
 agentic-rag-bot/
-├── docs/                       # 설계 문서
-│   ├── strategy.md             # 전략 문서 (본 문서)
-│   ├── architecture.md         # 아키텍처 설계
-│   ├── implementation-guide.md # 구현 가이드
-│   └── api-and-data-flow.md   # API 및 데이터 흐름
+├── docs/                        # 설계 문서
+│   ├── strategy.md              # 전략 문서 (본 문서)
+│   ├── architecture.md          # 아키텍처 설계
+│   ├── implementation-guide.md  # 구현 가이드
+│   ├── api-and-data-flow.md    # API 및 데이터 흐름
+│   ├── query-planner.md        # Query Planner 설계 (Phase 2.5)
+│   └── human-in-the-loop.md   # HITL 설계 (Phase 4)
 ├── src/
 │   ├── __init__.py
-│   ├── main.py                 # 진입점
-│   ├── agent.py                # 에이전트 코어 로직
-│   ├── router.py               # 라우터 (Phase 2)
-│   ├── grader.py               # 문서 평가기 (Phase 3)
+│   ├── main.py                  # 진입점
+│   ├── agent.py                 # 에이전트 코어 로직
+│   ├── router.py                # 라우터 (Phase 2)
+│   ├── planner.py               # Query Planner (Phase 2.5)
+│   ├── grader.py                # 문서 평가기 (Phase 3)
+│   ├── hitl.py                  # Human in the Loop (Phase 4)
 │   ├── tools/
 │   │   ├── __init__.py
-│   │   ├── vector_search.py    # 벡터 DB 검색 도구
-│   │   └── web_search.py       # 웹 검색 도구
+│   │   ├── vector_search.py     # 벡터 DB 검색 도구
+│   │   └── web_search.py        # 웹 검색 도구
 │   ├── prompts/
 │   │   ├── __init__.py
-│   │   ├── system.py           # 시스템 프롬프트
-│   │   ├── router.py           # 라우팅 판단 프롬프트
-│   │   ├── grader.py           # 문서 평가 프롬프트
-│   │   ├── rewriter.py         # 쿼리 재작성 프롬프트
-│   │   └── generator.py        # 최종 답변 생성 프롬프트
+│   │   ├── system.py            # 시스템 프롬프트
+│   │   ├── router.py            # 라우팅 판단 프롬프트
+│   │   ├── planner.py           # 질의 분석 & 최적화 프롬프트
+│   │   ├── grader.py            # 문서 평가 프롬프트
+│   │   ├── rewriter.py          # 쿼리 재작성 프롬프트
+│   │   └── generator.py         # 최종 답변 생성 프롬프트
 │   ├── vectorstore/
 │   │   ├── __init__.py
-│   │   ├── store.py            # ChromaDB 래퍼
-│   │   └── ingest.py           # 문서 인제스트 파이프라인
-│   └── config.py               # 설정 관리
+│   │   ├── store.py             # ChromaDB 래퍼
+│   │   └── ingest.py            # 문서 인제스트 파이프라인
+│   └── config.py                # 설정 관리 (HITL 모드 포함)
 ├── data/
-│   └── documents/              # RAG용 원본 문서
+│   ├── documents/               # RAG용 원본 문서
+│   └── feedback.jsonl           # 사용자 피드백 저장소
 ├── tests/
 │   ├── test_agent.py
 │   ├── test_router.py
+│   ├── test_planner.py
 │   ├── test_grader.py
+│   ├── test_hitl.py
+│   ├── test_feedback.py
 │   └── test_tools.py
-├── .env.example                # 환경 변수 템플릿
+├── .env.example                 # 환경 변수 템플릿
 ├── .gitignore
 ├── requirements.txt
 └── README.md
