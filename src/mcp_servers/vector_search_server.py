@@ -1,6 +1,7 @@
-"""Vector Search MCP Server - 벡터 DB 검색 도구를 MCP로 제공
+"""Vector Search MCP Server - Advanced RAG 검색 도구를 MCP로 제공
 
 stdio를 통해 JSON-RPC 메시지를 주고받는 MCP 서버이다.
+Hybrid Search (Vector + BM25) + RRF + Parent Lookup을 수행한다.
 """
 
 import json
@@ -13,6 +14,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 # Lazy 초기화 (서버 시작 시가 아니라 첫 검색 호출 시 로딩)
 _embedder = None
 _chroma = None
+_retriever = None
 
 
 def _get_embedder():
@@ -30,10 +32,21 @@ def _get_chroma():
         _chroma = chromadb.PersistentClient(path=CHROMA_DIR)
     return _chroma
 
+
+def _get_retriever():
+    global _retriever
+    if _retriever is None:
+        from src.retriever import AdvancedRetriever
+        _retriever = AdvancedRetriever(
+            chroma_client=_get_chroma(),
+            embedder=_get_embedder(),
+        )
+    return _retriever
+
 TOOLS = [
     {
         "name": "search_vector_db",
-        "description": "사내 문서 데이터베이스에서 관련 문서를 검색합니다. 사내 정책, 가이드라인, 매뉴얼, 업무 절차에 대한 질문일 때 사용하세요.",
+        "description": "사내 문서 데이터베이스에서 관련 문서를 검색합니다. Hybrid Search(벡터+BM25) + RRF 스코어 퓨전으로 정확한 결과를 반환합니다.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -51,26 +64,21 @@ TOOLS = [
 
 
 def search(query: str, top_k: int = 3) -> dict:
-    try:
-        col = _get_chroma().get_collection("documents")
-    except Exception:
+    retriever = _get_retriever()
+    results = retriever.search(query=query, top_k=top_k)
+
+    if not results:
         return {
             "content": [{"type": "text", "text": json.dumps([], ensure_ascii=False)}]
         }
 
-    query_embedding = _get_embedder().encode(query).tolist()
-    results = col.query(query_embeddings=[query_embedding], n_results=top_k)
-
     docs = []
-    for i, doc in enumerate(results["documents"][0]):
-        distance = results["distances"][0][i] if results.get("distances") else 0.0
-        docs.append(
-            {
-                "content": doc,
-                "metadata": results["metadatas"][0][i],
-                "distance": distance,
-            }
-        )
+    for r in results:
+        docs.append({
+            "content": r.parent_content,
+            "metadata": r.metadata,
+            "distance": r.distance,
+        })
 
     return {
         "content": [{"type": "text", "text": json.dumps(docs, ensure_ascii=False)}]
