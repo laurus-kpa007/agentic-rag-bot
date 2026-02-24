@@ -37,8 +37,8 @@ graph TB
         Generator["✍️ Generator<br/>(답변 생성기)"]
     end
 
-    subgraph "외부 서비스"
-        LLM["Claude API"]
+    subgraph "로컬 서비스"
+        LLM["Ollama<br/>(gemma3:12b)"]
         VectorDB["ChromaDB"]
         WebAPI["Web Search API"]
     end
@@ -300,55 +300,51 @@ flowchart LR
 - `strict`: 모든 검색 답변에 필수 검토
 - `off`: HITL 비활성화
 
-### 2.6 도구(Tools) 설계
+### 2.6 도구(Tools) 설계 - MCP 기반
+
+도구는 **MCP(Model Context Protocol)** 플러그인 방식으로 제공된다. 코드 수정 없이 `mcp_config.json`에 서버를 등록하면 자동으로 LLM이 인식한다.
+
+> **상세 설계**: [Ollama + MCP 통합 설계 문서](./mcp-integration.md) 참조
 
 ```mermaid
-classDiagram
-    class ToolInterface {
-        <<interface>>
-        +name: str
-        +description: str
-        +parameters: dict
-        +execute(params: dict) dict
-    }
+graph TD
+    Agent["Agent Core"]
+    LLM["OllamaAdapter<br/>(llm_adapter.py)"]
 
-    class VectorSearchTool {
-        +name = "search_vector_db"
-        +description = "사내 문서 벡터 DB 검색"
-        +execute(query: str, top_k: int) list~Document~
-    }
+    subgraph "MCP Client (mcp_client.py)"
+        Client["도구 탐색 & 호출 중계"]
+    end
 
-    class WebSearchTool {
-        +name = "web_search"
-        +description = "외부 웹 검색"
-        +execute(query: str) list~SearchResult~
-    }
+    subgraph "MCP Servers (플러그인)"
+        S1["vector-search<br/>search_vector_db()"]
+        S2["web-search<br/>web_search()"]
+        S3["... 추가 가능<br/>(mcp_config.json에 등록)"]
+    end
 
-    class Document {
-        +content: str
-        +metadata: dict
-        +score: float
-    }
+    Agent --> LLM
+    Agent --> Client
+    Client -->|"stdio / JSON-RPC"| S1
+    Client -->|"stdio / JSON-RPC"| S2
+    Client -.->|"설정 파일에 등록만"| S3
 
-    class SearchResult {
-        +title: str
-        +url: str
-        +snippet: str
-    }
-
-    ToolInterface <|.. VectorSearchTool
-    ToolInterface <|.. WebSearchTool
-    VectorSearchTool --> Document
-    WebSearchTool --> SearchResult
+    style Client fill:#E91E63,color:#fff
+    style LLM fill:#4CAF50,color:#fff
+    style S1 fill:#2196F3,color:#fff
+    style S2 fill:#FF9800,color:#fff
 ```
 
-**Tool 정의 스키마 (Claude API 형식):**
+**MCP 도구 등록/호출 흐름:**
+1. 시작 시 `MCPClient.connect_all()`로 모든 MCP 서버에 연결하여 도구 목록 수집
+2. `MCPClient.get_tools_for_llm()`으로 Ollama에 전달할 도구 스키마 반환
+3. LLM이 `tool_call` 응답 → `MCPClient.call_tool(name, args)`로 해당 서버에 중계
+
+**Tool 정의 스키마 (Ollama Tool Calling 형식):**
 
 ```json
 {
-  "name": "search_vector_db",
-  "description": "사내 문서 데이터베이스에서 관련 문서를 검색합니다. 사내 정책, 가이드라인, 매뉴얼 등에 대한 질문일 때 사용합니다.",
-  "input_schema": {
+  "name": "vector-search__search_vector_db",
+  "description": "사내 문서 데이터베이스에서 관련 문서를 검색합니다.",
+  "parameters": {
     "type": "object",
     "properties": {
       "query": {
@@ -365,6 +361,8 @@ classDiagram
   }
 }
 ```
+
+**도구 추가 방법:** `mcp_config.json`에 서버만 등록하면 코드 변경 **0줄**로 새 도구 사용 가능.
 
 ---
 

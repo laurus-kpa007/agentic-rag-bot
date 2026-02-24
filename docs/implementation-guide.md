@@ -6,21 +6,30 @@
 
 ```
 # requirements.txt
-anthropic>=0.39.0         # Claude API 클라이언트
-chromadb>=0.5.0           # 벡터 데이터베이스
+requests>=2.31.0              # Ollama API 호출
+chromadb>=0.5.0               # 벡터 데이터베이스
 sentence-transformers>=3.0.0  # 임베딩 모델
-python-dotenv>=1.0.0      # 환경 변수 관리
+python-dotenv>=1.0.0          # 환경 변수 관리
 ```
 
 ### 1.2 환경 변수
 
 ```bash
 # .env.example
-ANTHROPIC_API_KEY=your-api-key-here
-TAVILY_API_KEY=your-tavily-key-here    # 웹 검색용 (선택)
+OLLAMA_URL=http://localhost:11434       # Ollama 서버 주소
+LLM_MODEL=gemma3:12b                   # 사용할 LLM 모델
+MCP_CONFIG_PATH=mcp_config.json        # MCP 서버 설정 경로
 CHROMA_PERSIST_DIR=./data/chroma       # ChromaDB 저장 경로
-EMBEDDING_MODEL=all-MiniLM-L6-v2      # 임베딩 모델명
-LLM_MODEL=claude-sonnet-4-20250514       # 사용할 Claude 모델
+EMBEDDING_MODEL=all-MiniLM-L6-v2       # 임베딩 모델명
+HITL_MODE=auto                         # HITL 모드 (auto/strict/off)
+```
+
+### 1.3 사전 준비
+
+```bash
+# Ollama 설치 및 모델 다운로드
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull gemma3:12b
 ```
 
 ---
@@ -33,21 +42,23 @@ LLM_MODEL=claude-sonnet-4-20250514       # 사용할 Claude 모델
 sequenceDiagram
     participant User as 사용자
     participant Agent as Agent Core
-    participant Claude as Claude API
-    participant VDB as ChromaDB
-    participant Web as Web Search
+    participant LLM as Ollama (gemma3:12b)
+    participant MCP as MCP Client
+    participant Server as MCP Server
 
     User->>Agent: 질문 입력
-    Agent->>Claude: 질문 + Tool 정의 전송
+    Agent->>LLM: 질문 + MCP 도구 목록 전송
 
     alt LLM이 도구 호출을 결정한 경우
-        Claude-->>Agent: tool_use 응답 (search_vector_db)
-        Agent->>VDB: 벡터 검색 실행
-        VDB-->>Agent: 관련 문서 반환
-        Agent->>Claude: 도구 실행 결과 전송
-        Claude-->>Agent: 최종 텍스트 답변
+        LLM-->>Agent: tool_calls 응답 (search_vector_db)
+        Agent->>MCP: call_tool("vector-search__search_vector_db", args)
+        MCP->>Server: JSON-RPC tools/call
+        Server-->>MCP: 검색 결과
+        MCP-->>Agent: 결과 반환
+        Agent->>LLM: 도구 실행 결과 전송
+        LLM-->>Agent: 최종 텍스트 답변
     else LLM이 직접 답변하는 경우
-        Claude-->>Agent: 텍스트 답변 (도구 미사용)
+        LLM-->>Agent: 텍스트 답변 (도구 미사용)
     end
 
     Agent-->>User: 최종 답변 전달
@@ -57,180 +68,126 @@ sequenceDiagram
 
 ```python
 """
-Agent Core - Tool Calling 기반 에이전트 루프
+Agent Core - Ollama + MCP 기반 Tool Calling 루프
 
 핵심 로직:
-1. 사용자 메시지 + 도구 정의를 Claude에게 전송
-2. 응답에 tool_use가 있으면 해당 도구 실행
-3. 실행 결과를 다시 Claude에게 전송 (반복)
+1. 사용자 메시지 + MCP 도구 목록을 Ollama에게 전송
+2. 응답에 tool_calls가 있으면 MCP를 통해 도구 실행
+3. 실행 결과를 다시 Ollama에게 전송 (반복)
 4. text 응답이 나오면 최종 답변으로 반환
 """
 
-import anthropic
-from tools import TOOL_DEFINITIONS, execute_tool
+from llm_adapter import OllamaAdapter
+from mcp_client import MCPClient
 
-MAX_TOOL_CALLS = 3  # 무한 루프 방지
+MAX_TOOL_CALLS = 5  # 무한 루프 방지
 
-def run_agent(user_query: str, conversation_history: list) -> str:
-    client = anthropic.Anthropic()
+class AgentCore:
+    def __init__(self, llm: OllamaAdapter, mcp: MCPClient, system_prompt: str):
+        self.llm = llm
+        self.mcp = mcp
+        self.system_prompt = system_prompt
 
-    messages = conversation_history + [
-        {"role": "user", "content": user_query}
-    ]
+    def run(self, messages: list) -> str:
+        tools = self.mcp.get_tools_for_llm()
+        full_messages = [{"role": "system", "content": self.system_prompt}] + messages
 
-    tool_call_count = 0
+        for _ in range(MAX_TOOL_CALLS):
+            response = self.llm.chat(full_messages, tools=tools)
 
-    while tool_call_count < MAX_TOOL_CALLS:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            tools=TOOL_DEFINITIONS,
-            messages=messages
-        )
+            if not response.has_tool_calls():
+                return response.content
 
-        # 응답에서 tool_use 블록 확인
-        tool_use_blocks = [
-            block for block in response.content
-            if block.type == "tool_use"
-        ]
-
-        if not tool_use_blocks:
-            # 도구 호출 없음 → 최종 텍스트 답변 반환
-            return extract_text(response)
-
-        # 도구 실행 및 결과 수집
-        messages.append({"role": "assistant", "content": response.content})
-
-        tool_results = []
-        for tool_block in tool_use_blocks:
-            result = execute_tool(tool_block.name, tool_block.input)
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_block.id,
-                "content": result
+            # 도구 호출 → MCP를 통해 실행 → 결과 수집
+            full_messages.append({
+                "role": "assistant",
+                "content": response.content,
+                "tool_calls": [{"id": tc.id, "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments}}
+                    for tc in response.tool_calls]
             })
 
-        messages.append({"role": "user", "content": tool_results})
-        tool_call_count += 1
+            for tc in response.tool_calls:
+                result = self.mcp.call_tool(tc.name, tc.arguments)
+                full_messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": result
+                })
 
-    return "죄송합니다. 답변을 생성하는 데 문제가 발생했습니다."
+        return "답변 생성에 실패했습니다."
 ```
 
-### 2.3 도구 정의 - `tools/vector_search.py`
+### 2.3 MCP 서버 - `mcp_servers/vector_search_server.py`
+
+도구는 MCP 서버로 분리되어 플러그인처럼 동작한다. 코드 수정 없이 `mcp_config.json`에 등록만 하면 된다.
 
 ```python
-"""
-벡터 DB 검색 도구
+"""Vector Search MCP Server - 벡터 DB 검색 도구를 MCP로 제공"""
 
-ChromaDB를 활용한 사내 문서 유사도 검색을 수행한다.
-"""
-
+import json, sys
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# 도구 스키마 (Claude API 형식)
-VECTOR_SEARCH_TOOL = {
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+chroma = chromadb.PersistentClient(path="./data/chroma")
+
+TOOLS = [{
     "name": "search_vector_db",
-    "description": (
-        "사내 문서 데이터베이스에서 관련 문서를 검색합니다. "
-        "사내 정책, 가이드라인, 매뉴얼, 업무 절차 등에 대한 "
-        "질문일 때 사용하세요."
-    ),
-    "input_schema": {
+    "description": "사내 문서 데이터베이스에서 관련 문서를 검색합니다.",
+    "inputSchema": {
         "type": "object",
         "properties": {
-            "query": {
-                "type": "string",
-                "description": "검색할 쿼리 문자열"
-            },
-            "top_k": {
-                "type": "integer",
-                "description": "반환할 최대 문서 수",
-                "default": 3
-            }
+            "query": {"type": "string", "description": "검색 쿼리"},
+            "top_k": {"type": "integer", "default": 3}
         },
         "required": ["query"]
     }
-}
+}]
 
-def search_vector_db(query: str, top_k: int = 3) -> list[dict]:
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    client = chromadb.PersistentClient(path="./data/chroma")
-    collection = client.get_collection("documents")
-
-    query_embedding = embedder.encode(query).tolist()
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k
+def search(query, top_k=3):
+    col = chroma.get_collection("documents")
+    results = col.query(
+        query_embeddings=[embedder.encode(query).tolist()], n_results=top_k
     )
+    docs = [{"content": d, "metadata": results["metadatas"][0][i]}
+            for i, d in enumerate(results["documents"][0])]
+    return {"content": [{"type": "text", "text": json.dumps(docs, ensure_ascii=False)}]}
 
-    documents = []
-    for i, doc in enumerate(results["documents"][0]):
-        documents.append({
-            "content": doc,
-            "metadata": results["metadatas"][0][i],
-            "distance": results["distances"][0][i]
-        })
-
-    return documents
+if __name__ == "__main__":
+    for line in sys.stdin:
+        req = json.loads(line.strip())
+        m = req.get("method", "")
+        if m == "initialize":
+            r = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
+                 "serverInfo": {"name": "vector-search"}}
+        elif m == "tools/list":
+            r = {"tools": TOOLS}
+        elif m == "tools/call":
+            p = req["params"]
+            r = search(p["arguments"]["query"], p["arguments"].get("top_k", 3))
+        else:
+            r = {}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req.get("id"), "result": r}) + "\n")
+        sys.stdout.flush()
 ```
 
-### 2.4 도구 정의 - `tools/web_search.py`
+### 2.4 도구 설정 - `mcp_config.json`
 
-```python
-"""
-웹 검색 도구
-
-외부 웹 검색 API를 활용한 실시간 정보 검색을 수행한다.
-"""
-
-import os
-import requests
-
-WEB_SEARCH_TOOL = {
-    "name": "web_search",
-    "description": (
-        "외부 웹에서 최신 정보를 검색합니다. "
-        "실시간 데이터, 뉴스, 최신 기술 트렌드 등 "
-        "사내 문서에 없는 정보가 필요할 때 사용하세요."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "검색할 쿼리 문자열"
-            }
-        },
-        "required": ["query"]
+```json
+{
+  "mcpServers": {
+    "vector-search": {
+      "command": "python",
+      "args": ["src/mcp_servers/vector_search_server.py"]
+    },
+    "web-search": {
+      "command": "python",
+      "args": ["src/mcp_servers/web_search_server.py"]
     }
+  }
 }
-
-def web_search(query: str) -> list[dict]:
-    api_key = os.getenv("TAVILY_API_KEY")
-
-    response = requests.post(
-        "https://api.tavily.com/search",
-        json={
-            "api_key": api_key,
-            "query": query,
-            "max_results": 3
-        }
-    )
-
-    results = response.json().get("results", [])
-
-    return [
-        {
-            "title": r["title"],
-            "url": r["url"],
-            "snippet": r["content"][:500]
-        }
-        for r in results
-    ]
 ```
+
+도구를 추가하려면 이 파일에 서버만 등록하면 된다 (코드 변경 0줄).
 
 ---
 
@@ -271,28 +228,24 @@ Router - 사용자 질문 의도 분류기
 경량 LLM 호출로 질문을 3가지 카테고리로 분류한다.
 """
 
-import anthropic
+from llm_adapter import OllamaAdapter
 from prompts.router import ROUTER_PROMPT
 
 class Router:
     VALID_ROUTES = {"INTERNAL_SEARCH", "WEB_SEARCH", "CHITCHAT"}
 
-    def __init__(self):
-        self.client = anthropic.Anthropic()
+    def __init__(self, llm: OllamaAdapter):
+        self.llm = llm
 
     def classify(self, query: str) -> str:
         """사용자 질문을 분류하여 라우팅 경로를 반환한다."""
 
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=50,
-            system=ROUTER_PROMPT,
-            messages=[
-                {"role": "user", "content": query}
-            ]
-        )
+        response = self.llm.chat(messages=[
+            {"role": "system", "content": ROUTER_PROMPT},
+            {"role": "user", "content": query}
+        ])
 
-        route = response.content[0].text.strip().upper()
+        route = response.content.strip().upper()
 
         if route not in self.VALID_ROUTES:
             return "INTERNAL_SEARCH"  # 폴백
@@ -367,12 +320,12 @@ Grader - 검색 결과 관련성 평가기
 검색된 문서가 사용자 질문에 답하기 충분한지 이진 판단(PASS/FAIL)을 수행한다.
 """
 
-import anthropic
+from llm_adapter import OllamaAdapter
 from prompts.grader import GRADER_PROMPT
 
 class Grader:
-    def __init__(self):
-        self.client = anthropic.Anthropic()
+    def __init__(self, llm: OllamaAdapter):
+        self.llm = llm
 
     def evaluate(self, query: str, documents: list[dict]) -> str:
         """검색 결과의 관련성을 평가한다."""
@@ -382,22 +335,18 @@ class Grader:
             for i, doc in enumerate(documents)
         )
 
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=10,
-            system=GRADER_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"## 사용자 질문\n{query}\n\n"
-                        f"## 검색된 문서\n{docs_text}"
-                    )
-                }
-            ]
-        )
+        response = self.llm.chat(messages=[
+            {"role": "system", "content": GRADER_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"## 사용자 질문\n{query}\n\n"
+                    f"## 검색된 문서\n{docs_text}"
+                )
+            }
+        ])
 
-        result = response.content[0].text.strip().upper()
+        result = response.content.strip().upper()
         return result if result in ("PASS", "FAIL") else "PASS"
 ```
 
@@ -410,29 +359,22 @@ Rewriter - 검색 쿼리 재작성기
 Grader에서 FAIL 판정을 받은 경우, 원본 질문을 더 나은 검색 쿼리로 변환한다.
 """
 
-import anthropic
+from llm_adapter import OllamaAdapter
 from prompts.rewriter import REWRITER_PROMPT
 
 class QueryRewriter:
-    def __init__(self):
-        self.client = anthropic.Anthropic()
+    def __init__(self, llm: OllamaAdapter):
+        self.llm = llm
 
     def rewrite(self, original_query: str) -> str:
         """원본 질문을 개선된 검색 쿼리로 재작성한다."""
 
-        response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=200,
-            system=REWRITER_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"원본 질문: {original_query}"
-                }
-            ]
-        )
+        response = self.llm.chat(messages=[
+            {"role": "system", "content": REWRITER_PROMPT},
+            {"role": "user", "content": f"원본 질문: {original_query}"}
+        ])
 
-        return response.content[0].text.strip()
+        return response.content.strip()
 ```
 
 ### 4.4 Grader 프롬프트 - `prompts/grader.py`
@@ -548,27 +490,37 @@ flowchart TD
 main.py - Simple Agentic RAG 진입점
 
 Phase 1~4를 모두 통합한 최종 실행 파일이다.
-- Phase 1: 네이티브 Tool Calling
+- Phase 1: 네이티브 Tool Calling (Ollama + MCP)
 - Phase 2: Router 패턴
 - Phase 2.5: Query Planner
 - Phase 3: 단일 피드백 루프 (CRAG)
 - Phase 4: Human in the Loop
 """
 
+from llm_adapter import OllamaAdapter
+from mcp_client import MCPClient
 from agent import AgentCore
 from router import Router
 from planner import QueryPlanner
 from grader import Grader, QueryRewriter
 from hitl import HITLManager, HITLContext, FeedbackStore
+from prompts.system import SYSTEM_PROMPT
 from config import Config
 
 def main():
     config = Config()
-    agent = AgentCore(config)
-    router = Router()
-    planner = QueryPlanner()
-    grader = Grader()
-    rewriter = QueryRewriter()
+
+    # 핵심 인프라 초기화
+    llm = OllamaAdapter(model=config.llm_model, base_url=config.ollama_url)
+    mcp = MCPClient(config_path=config.mcp_config_path)
+    mcp.connect_all()
+
+    # 파이프라인 컴포넌트 초기화 (모두 같은 LLM 인스턴스 공유)
+    agent = AgentCore(llm=llm, mcp=mcp, system_prompt=SYSTEM_PROMPT)
+    router = Router(llm=llm)
+    planner = QueryPlanner(llm=llm)
+    grader = Grader(llm=llm)
+    rewriter = QueryRewriter(llm=llm)
     hitl = HITLManager(mode=config.hitl_mode)  # "auto" / "strict" / "off"
     feedback_store = FeedbackStore()
 
@@ -676,6 +628,9 @@ def main():
         feedback = hitl.collect_feedback(query, answer)
         if feedback:
             feedback_store.save(feedback)
+
+    # MCP 서버 종료
+    mcp.disconnect_all()
 
 if __name__ == "__main__":
     main()
@@ -853,13 +808,17 @@ graph TD
 
 ## 8. 구현 체크리스트
 
-### Phase 1: 네이티브 Tool Calling
+### Phase 1: 네이티브 Tool Calling (Ollama + MCP)
 
 - [ ] 프로젝트 초기 설정 (`requirements.txt`, `.env`, `.gitignore`)
+- [ ] Ollama 설치 및 `gemma3:12b` 모델 다운로드
 - [ ] `config.py` - 설정 관리 모듈
-- [ ] `tools/vector_search.py` - 벡터 검색 도구
-- [ ] `tools/web_search.py` - 웹 검색 도구
-- [ ] `agent.py` - 에이전트 코어 (Tool Calling 루프)
+- [ ] `llm_adapter.py` - OllamaAdapter (LLM 추상화)
+- [ ] `mcp_client.py` - MCP 클라이언트
+- [ ] `mcp_servers/vector_search_server.py` - 벡터 검색 MCP 서버
+- [ ] `mcp_servers/web_search_server.py` - 웹 검색 MCP 서버
+- [ ] `mcp_config.json` - MCP 서버 설정
+- [ ] `agent.py` - 에이전트 코어 (Ollama + MCP Tool Calling 루프)
 - [ ] `vectorstore/ingest.py` - 문서 인제스트
 - [ ] `main.py` - 기본 CLI 인터페이스
 - [ ] Phase 1 테스트 작성 및 통과

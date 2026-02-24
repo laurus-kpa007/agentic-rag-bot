@@ -2,7 +2,7 @@
 
 ## 1. 외부 API 인터페이스
 
-### 1.1 사용하는 외부 API 목록
+### 1.1 사용하는 서비스 목록
 
 ```mermaid
 graph LR
@@ -10,9 +10,13 @@ graph LR
         App["Application"]
     end
 
-    subgraph "외부 API"
-        Claude["Claude API<br/>(Anthropic)"]
-        Tavily["Tavily Search API"]
+    subgraph "로컬 LLM"
+        Ollama["Ollama<br/>(gemma3:12b)"]
+    end
+
+    subgraph "MCP Servers"
+        VectorMCP["vector-search<br/>MCP Server"]
+        WebMCP["web-search<br/>MCP Server"]
     end
 
     subgraph "로컬 서비스"
@@ -20,34 +24,35 @@ graph LR
         STModel["SentenceTransformers<br/>(로컬 임베딩)"]
     end
 
-    App -->|"messages.create()"| Claude
-    App -->|"POST /search"| Tavily
-    App -->|"query()"| Chroma
-    App -->|"encode()"| STModel
+    App -->|"POST /api/chat"| Ollama
+    App -->|"stdio JSON-RPC"| VectorMCP
+    App -->|"stdio JSON-RPC"| WebMCP
+    VectorMCP -->|"query()"| Chroma
+    VectorMCP -->|"encode()"| STModel
 
-    style Claude fill:#9C27B0,color:#fff
-    style Tavily fill:#2196F3,color:#fff
-    style Chroma fill:#4CAF50,color:#fff
-    style STModel fill:#FF9800,color:#fff
+    style Ollama fill:#4CAF50,color:#fff
+    style VectorMCP fill:#2196F3,color:#fff
+    style WebMCP fill:#9C27B0,color:#fff
+    style Chroma fill:#FF9800,color:#fff
 ```
 
-### 1.2 Claude API 호출 패턴
+### 1.2 Ollama API 호출 패턴
 
-시스템 전체에서 Claude API는 **4가지 역할**로 호출된다. 각 호출은 독립적인 프롬프트와 파라미터를 사용한다.
+시스템 전체에서 Ollama API는 **4가지 역할**로 호출된다. 모든 호출은 `OllamaAdapter.chat()`을 통해 통일된 인터페이스로 수행된다.
 
 ```mermaid
 graph TD
-    subgraph "Claude API 호출 유형"
+    subgraph "Ollama API 호출 유형 (POST /api/chat)"
         direction TB
 
-        Call1["① Router 호출<br/>max_tokens: 50<br/>도구: 없음"]
-        Call2["② Agent 호출<br/>max_tokens: 1024<br/>도구: search_vector_db, web_search"]
-        Call3["③ Grader 호출<br/>max_tokens: 10<br/>도구: 없음"]
-        Call4["④ Rewriter 호출<br/>max_tokens: 200<br/>도구: 없음"]
+        Call1["① Router 호출<br/>도구: 없음"]
+        Call2["② Agent 호출<br/>도구: MCP에서 수집한 전체 도구"]
+        Call3["③ Grader 호출<br/>도구: 없음"]
+        Call4["④ Rewriter 호출<br/>도구: 없음"]
     end
 
     Call1 -->|"출력"| R1["INTERNAL_SEARCH | WEB_SEARCH | CHITCHAT"]
-    Call2 -->|"출력"| R2["tool_use 또는 text 응답"]
+    Call2 -->|"출력"| R2["tool_calls 또는 text 응답"]
     Call3 -->|"출력"| R3["PASS | FAIL"]
     Call4 -->|"출력"| R4["재작성된 검색 쿼리"]
 
@@ -57,18 +62,20 @@ graph TD
     style Call4 fill:#F44336,color:#fff
 ```
 
-### 1.3 API 호출 비용 분석
+### 1.3 리소스 사용 분석
+
+로컬 Ollama를 사용하므로 API 비용은 **무료**이다. 대신 로컬 GPU 리소스를 사용한다.
 
 | 호출 유형 | 모델 | 입력 토큰 (예상) | 출력 토큰 (예상) | 호출 빈도 |
 |-----------|------|------------------|------------------|-----------|
-| Router | claude-sonnet | ~200 | ~5 | 매 질문 |
-| Agent (검색 포함) | claude-sonnet | ~800 | ~500 | 검색 필요 시 |
-| Agent (직접 답변) | claude-sonnet | ~300 | ~300 | CHITCHAT 시 |
-| Grader | claude-sonnet | ~1000 | ~3 | 검색 후 |
-| Rewriter | claude-sonnet | ~150 | ~30 | Grader FAIL 시 |
+| Router | gemma3:12b | ~200 | ~5 | 매 질문 |
+| Agent (검색 포함) | gemma3:12b | ~800 | ~500 | 검색 필요 시 |
+| Agent (직접 답변) | gemma3:12b | ~300 | ~300 | CHITCHAT 시 |
+| Grader | gemma3:12b | ~1000 | ~3 | 검색 후 |
+| Rewriter | gemma3:12b | ~150 | ~30 | Grader FAIL 시 |
 
-**1회 질문당 최대 API 호출 수**: 4회 (Router → Agent → Grader → Rewriter+재검색)
-**1회 질문당 최소 API 호출 수**: 2회 (Router → Direct Answer)
+**1회 질문당 최대 LLM 호출 수**: 4회 (Router → Agent → Grader → Rewriter+재검색)
+**1회 질문당 최소 LLM 호출 수**: 2회 (Router → Direct Answer)
 
 ---
 
@@ -84,37 +91,39 @@ sequenceDiagram
     participant Main as main.py
     participant Router as Router
     participant Agent as Agent Core
-    participant Claude as Claude API
-    participant VDB as ChromaDB
+    participant LLM as Ollama (gemma3:12b)
+    participant MCP as MCP Client
+    participant Server as MCP Server (vector)
     participant Grader as Grader
-    participant Gen as Generator
 
     User->>Main: "휴가 신청 방법 알려줘"
 
     rect rgb(200, 220, 255)
         Note over Main,Router: Phase 2: 라우팅
         Main->>Router: classify("휴가 신청 방법 알려줘")
-        Router->>Claude: messages.create(system=ROUTER_PROMPT)
-        Claude-->>Router: "INTERNAL_SEARCH"
+        Router->>LLM: chat(system=ROUTER_PROMPT)
+        LLM-->>Router: "INTERNAL_SEARCH"
         Router-->>Main: INTERNAL_SEARCH
     end
 
     rect rgb(200, 255, 200)
-        Note over Main,VDB: Phase 1: Tool Calling
-        Main->>Agent: search_and_answer(query, tool="search_vector_db")
-        Agent->>Claude: messages.create(tools=[search_vector_db])
-        Claude-->>Agent: tool_use: search_vector_db(query="휴가 신청")
-        Agent->>VDB: query(embedding, top_k=3)
-        VDB-->>Agent: [문서1, 문서2, 문서3]
-        Agent->>Claude: tool_result: [문서1, 문서2, 문서3]
-        Claude-->>Agent: "휴가 신청은 다음과 같이..."
+        Note over Main,Server: Phase 1: Tool Calling (MCP)
+        Main->>Agent: run(messages)
+        Agent->>LLM: chat(messages, tools=MCP 도구 목록)
+        LLM-->>Agent: tool_calls: search_vector_db(query="휴가 신청")
+        Agent->>MCP: call_tool("vector-search__search_vector_db", args)
+        MCP->>Server: JSON-RPC tools/call
+        Server-->>MCP: [문서1, 문서2, 문서3]
+        MCP-->>Agent: 검색 결과
+        Agent->>LLM: 도구 결과 전달
+        LLM-->>Agent: "휴가 신청은 다음과 같이..."
     end
 
     rect rgb(255, 240, 200)
         Note over Main,Grader: Phase 3: 평가
         Main->>Grader: evaluate(query, documents)
-        Grader->>Claude: messages.create(system=GRADER_PROMPT)
-        Claude-->>Grader: "PASS"
+        Grader->>LLM: chat(system=GRADER_PROMPT)
+        LLM-->>Grader: "PASS"
         Grader-->>Main: PASS
     end
 
@@ -130,8 +139,8 @@ sequenceDiagram
     actor User as 사용자
     participant Main as main.py
     participant Agent as Agent Core
-    participant Claude as Claude API
-    participant VDB as ChromaDB
+    participant LLM as Ollama (gemma3:12b)
+    participant MCP as MCP Client
     participant Grader as Grader
     participant Rewriter as Rewriter
 
@@ -140,35 +149,41 @@ sequenceDiagram
     Note over Main: Router → INTERNAL_SEARCH (생략)
 
     rect rgb(255, 200, 200)
-        Note over Main,VDB: 1차 검색 (결과 부족)
-        Main->>Agent: search_and_answer(query)
-        Agent->>VDB: query("신입사원 출퇴근 규정")
-        VDB-->>Agent: [관련 없는 문서들]
-        Agent->>Claude: tool_result 전달
-        Claude-->>Agent: 부정확한 답변
+        Note over Main,MCP: 1차 검색 (결과 부족)
+        Main->>Agent: run(messages)
+        Agent->>LLM: chat(messages, tools)
+        LLM-->>Agent: tool_calls: search_vector_db
+        Agent->>MCP: call_tool(...)
+        MCP-->>Agent: [관련 없는 문서들]
+        Agent->>LLM: 도구 결과 전달
+        LLM-->>Agent: 부정확한 답변
     end
 
     rect rgb(255, 240, 200)
         Note over Main,Grader: 평가: FAIL
         Main->>Grader: evaluate(query, documents)
+        Grader->>LLM: chat(system=GRADER_PROMPT)
+        LLM-->>Grader: "FAIL"
         Grader-->>Main: "FAIL"
     end
 
     rect rgb(200, 220, 255)
         Note over Main,Rewriter: 쿼리 재작성
         Main->>Rewriter: rewrite("신입사원 출퇴근 규정이 뭐야?")
-        Rewriter->>Claude: messages.create(system=REWRITER_PROMPT)
-        Claude-->>Rewriter: "신규 입사자 근무시간 출퇴근 복무 규정"
+        Rewriter->>LLM: chat(system=REWRITER_PROMPT)
+        LLM-->>Rewriter: "신규 입사자 근무시간 출퇴근 복무 규정"
         Rewriter-->>Main: 재작성된 쿼리
     end
 
     rect rgb(200, 255, 200)
-        Note over Main,VDB: 2차 검색 (재작성 쿼리)
-        Main->>Agent: search_and_answer("신규 입사자 근무시간...")
-        Agent->>VDB: query("신규 입사자 근무시간 출퇴근 복무 규정")
-        VDB-->>Agent: [관련 문서 발견!]
-        Agent->>Claude: tool_result 전달
-        Claude-->>Agent: 정확한 답변
+        Note over Main,MCP: 2차 검색 (재작성 쿼리)
+        Main->>Agent: run(재작성된 쿼리)
+        Agent->>LLM: chat(messages, tools)
+        LLM-->>Agent: tool_calls: search_vector_db
+        Agent->>MCP: call_tool(...)
+        MCP-->>Agent: [관련 문서 발견!]
+        Agent->>LLM: 도구 결과 전달
+        LLM-->>Agent: 정확한 답변
     end
 
     Main-->>User: "신입사원 근무시간 규정은..."
@@ -183,23 +198,23 @@ sequenceDiagram
     actor User as 사용자
     participant Main as main.py
     participant Router as Router
-    participant Claude as Claude API
+    participant LLM as Ollama (gemma3:12b)
 
     User->>Main: "안녕하세요! 오늘 기분이 좋아요"
 
     Main->>Router: classify("안녕하세요! 오늘 기분이 좋아요")
-    Router->>Claude: messages.create(system=ROUTER_PROMPT)
-    Claude-->>Router: "CHITCHAT"
+    Router->>LLM: chat(system=ROUTER_PROMPT)
+    LLM-->>Router: "CHITCHAT"
     Router-->>Main: CHITCHAT
 
     Note over Main: 검색 도구 없이 LLM 직접 호출
 
-    Main->>Claude: messages.create(도구 없음)
-    Claude-->>Main: "안녕하세요! 좋은 하루 보내고 계시군요..."
+    Main->>LLM: chat(도구 없음)
+    LLM-->>Main: "안녕하세요! 좋은 하루 보내고 계시군요..."
 
     Main-->>User: "안녕하세요! 좋은 하루 보내고 계시군요..."
 
-    Note over User,Claude: API 호출: 총 2회<br/>(Router 1회 + 답변 생성 1회)
+    Note over User,LLM: LLM 호출: 총 2회 (로컬, 무료)<br/>(Router 1회 + 답변 생성 1회)
 ```
 
 ---
@@ -269,12 +284,12 @@ graph LR
     subgraph "LLM에 전송되는 메시지"
         SYS["system: SYSTEM_PROMPT"]
         HIST["messages: conversation_history"]
-        TOOLS["tools: [search_vector_db, web_search]"]
+        TOOLS["tools: MCP에서 수집한 도구 목록"]
     end
 
     M1 --> HIST
     M7 --> HIST
-    SYS --> LLM["Claude API"]
+    SYS --> LLM["Ollama (gemma3:12b)"]
     HIST --> LLM
     TOOLS --> LLM
 
@@ -433,11 +448,11 @@ flowchart LR
 
 ## 6. 에러 흐름 및 재시도 메커니즘
 
-### 6.1 API 호출 재시도 전략
+### 6.1 LLM/MCP 호출 재시도 전략
 
 ```mermaid
 flowchart TD
-    Start["API 호출 시작"]
+    Start["Ollama / MCP 호출 시작"]
 
     Start --> Try1["1차 시도"]
 
@@ -466,15 +481,16 @@ flowchart TD
 
 | 컴포넌트 | 에러 유형 | 재시도 | 폴백 동작 |
 |----------|----------|--------|-----------|
-| **Router** | API 오류 | 2회 | `INTERNAL_SEARCH` 기본값 사용 |
+| **Router** | Ollama 오류 | 2회 | `INTERNAL_SEARCH` 기본값 사용 |
 | **Router** | 파싱 오류 | 0회 | `INTERNAL_SEARCH` 기본값 사용 |
-| **Agent** | API 오류 | 2회 | 오류 메시지 반환 |
-| **Agent** | 도구 실행 오류 | 1회 | 도구 없이 직접 답변 시도 |
+| **Agent** | Ollama 오류 | 2회 | 오류 메시지 반환 |
+| **Agent** | MCP 도구 실행 오류 | 1회 | 도구 없이 직접 답변 시도 |
+| **MCP Server** | 서버 프로세스 크래시 | 1회 | 해당 도구 비활성화, 오류 메시지 |
 | **VectorDB** | 검색 오류 | 1회 | 빈 결과로 진행 |
-| **WebSearch** | API 오류 | 2회 | "검색 결과를 가져올 수 없습니다" |
-| **Grader** | API 오류 | 1회 | `PASS` (안전 모드) |
+| **WebSearch** | 외부 API 오류 | 2회 | "검색 결과를 가져올 수 없습니다" |
+| **Grader** | Ollama 오류 | 1회 | `PASS` (안전 모드) |
 | **Grader** | 파싱 오류 | 0회 | `PASS` (안전 모드) |
-| **Rewriter** | API 오류 | 1회 | 원본 쿼리 그대로 재검색 |
+| **Rewriter** | Ollama 오류 | 1회 | 원본 쿼리 그대로 재검색 |
 
 ---
 

@@ -113,12 +113,15 @@ graph LR
 | 영역 | 기술 | 선택 이유 |
 |------|------|-----------|
 | **언어** | Python 3.11+ | AI/ML 생태계 호환성 |
-| **LLM** | Claude API (Anthropic) | 네이티브 Tool Calling 지원, 긴 컨텍스트 윈도우 |
+| **LLM** | Ollama + gemma3:12b (로컬) | 무료, 프라이버시, Tool Calling 네이티브 지원 |
+| **LLM 추상화** | LLM Adapter (자체 구현) | `.env`에서 모델명만 바꿔 교체 가능 |
+| **도구 시스템** | MCP (Model Context Protocol) | 플러그인 방식 도구 확장, 코드 수정 없이 도구 추가 |
 | **벡터 DB** | ChromaDB | 로컬 실행 가능, 설정 간단, 임베딩 내장 |
 | **임베딩 모델** | `all-MiniLM-L6-v2` (sentence-transformers) | 가볍고 빠름, 한국어 지원 |
 | **웹 검색** | Tavily API 또는 DuckDuckGo | 프로그래매틱 검색 지원 |
-| **문서 로더** | LangChain DocumentLoaders (최소 사용) | PDF, Markdown, 텍스트 파일 로딩에만 한정 |
 | **프레임워크** | 없음 (순수 Python) | 프레임워크 종속 배제 |
+
+> **상세 설계**: Ollama + MCP 통합은 [MCP 통합 설계 문서](./mcp-integration.md) 참조
 
 ### 3.2 기술 스택 선정 기준
 
@@ -157,19 +160,21 @@ agentic-rag-bot/
 │   ├── implementation-guide.md  # 구현 가이드
 │   ├── api-and-data-flow.md    # API 및 데이터 흐름
 │   ├── query-planner.md        # Query Planner 설계 (Phase 2.5)
-│   └── human-in-the-loop.md   # HITL 설계 (Phase 4)
+│   ├── human-in-the-loop.md   # HITL 설계 (Phase 4)
+│   └── mcp-integration.md     # Ollama + MCP 통합 설계
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                  # 진입점
-│   ├── agent.py                 # 에이전트 코어 로직
-│   ├── router.py                # 라우터 (Phase 2)
-│   ├── planner.py               # Query Planner (Phase 2.5)
-│   ├── grader.py                # 문서 평가기 (Phase 3)
+│   ├── agent.py                 # 에이전트 코어 로직 (Tool Calling 루프)
+│   ├── llm_adapter.py           # LLM 추상화 (Ollama 래퍼)
+│   ├── mcp_client.py            # MCP 클라이언트 (도구 탐색/호출)
+│   ├── router.py                # 라우터 (Phase 2, 선택적)
+│   ├── planner.py               # Query Planner (Phase 2.5, 선택적)
+│   ├── grader.py                # 문서 평가기 (Phase 3, 선택적)
 │   ├── hitl.py                  # Human in the Loop (Phase 4)
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── vector_search.py     # 벡터 DB 검색 도구
-│   │   └── web_search.py        # 웹 검색 도구
+│   ├── mcp_servers/             # 내장 MCP 서버
+│   │   ├── vector_search_server.py  # 벡터 DB 검색 MCP 서버
+│   │   └── web_search_server.py     # 웹 검색 MCP 서버
 │   ├── prompts/
 │   │   ├── __init__.py
 │   │   ├── system.py            # 시스템 프롬프트
@@ -183,6 +188,7 @@ agentic-rag-bot/
 │   │   ├── store.py             # ChromaDB 래퍼
 │   │   └── ingest.py            # 문서 인제스트 파이프라인
 │   └── config.py                # 설정 관리 (HITL 모드 포함)
+├── mcp_config.json              # MCP 서버 설정
 ├── data/
 │   ├── documents/               # RAG용 원본 문서
 │   └── feedback.jsonl           # 사용자 피드백 저장소
