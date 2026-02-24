@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vector-search": {
+      "command": "python",
+      "args": ["src/mcp_servers/vector_search_server.py"]
+    },
+    "web-search": {
+      "command": "python",
+      "args": ["src/mcp_servers/web_search_server.py"]
+    }
+  }
+}
