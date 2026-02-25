@@ -11,7 +11,7 @@ load_dotenv()
 class Config:
     def __init__(self):
         self.ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        self.llm_model: str = os.getenv("LLM_MODEL", "gemma3:12b")
+        self.llm_model: str = os.getenv("LLM_MODEL", "qwen3:14b")
         self.mcp_config_path: str = os.getenv("MCP_CONFIG_PATH", "mcp_config.json")
         self.chroma_persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
         self.embedding_model: str = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")

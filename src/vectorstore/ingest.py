@@ -21,6 +21,9 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 class _NoOpEmbeddingFunction(chromadb.EmbeddingFunction):
     """chromadb가 기본 임베딩 함수(onnx 다운로드)를 사용하지 않도록 하는 더미 EF."""
 
+    def __init__(self):
+        pass
+
     def __call__(self, input):
         return [[0.0] * 10 for _ in input]
 

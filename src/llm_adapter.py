@@ -4,6 +4,7 @@ Ollama의 /api/chat 엔드포인트를 통해 Tool Calling을 수행한다.
 """
 
 import json
+import re
 import uuid
 import urllib3
 
@@ -30,7 +31,7 @@ class LLMResponse:
 
 
 class OllamaAdapter:
-    def __init__(self, model: str = "gemma3:12b", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "qwen3:14b", base_url: str = "http://localhost:11434"):
         self.model = model
         self.base_url = base_url.rstrip("/")
 
@@ -54,6 +55,9 @@ class OllamaAdapter:
                 }
                 for t in tools
             ]
+            # qwen3 등 thinking 모델에서 tool calling 시 thinking 비활성화
+            payload["options"] = {"num_ctx": 8192}
+            payload["think"] = False
 
         resp = requests.post(
             f"{self.base_url}/api/chat",
@@ -75,7 +79,11 @@ class OllamaAdapter:
                 ToolCall(id=call_id, name=fn.get("name", ""), arguments=args)
             )
 
+        content = msg.get("content", "")
+        # qwen3 등 thinking 모델의 <think>...</think> 태그 제거
+        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
+
         return LLMResponse(
-            content=msg.get("content", ""),
+            content=content.strip(),
             tool_calls=tool_calls,
         )
