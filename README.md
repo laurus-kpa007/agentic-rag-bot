@@ -33,7 +33,7 @@
 - **LLM**: Ollama + gemma3:12b (로컬, 무료)
 - **도구 시스템**: MCP (Model Context Protocol) 플러그인 방식
 - **벡터 DB**: ChromaDB (로컬)
-- **임베딩**: sentence-transformers (all-MiniLM-L6-v2)
+- **임베딩**: sentence-transformers (BAAI/bge-m3, 다국어/한국어 지원)
 
 ## 시작하기
 
@@ -106,9 +106,10 @@ agentic-rag-bot/
 │   ├── mcp_servers/            # 내장 MCP 서버 (플러그인)
 │   │   ├── vector_search_server.py
 │   │   └── web_search_server.py
+│   ├── retriever.py               # Advanced Retriever (Hybrid Search + RRF)
 │   └── vectorstore/
-│       └── ingest.py           # 문서 인제스트
-├── tests/                      # 단위 + 통합 테스트 (69개)
+│       └── ingest.py           # 문서 인제스트 (Parent-Child Chunking)
+├── tests/                      # 단위 + 통합 테스트 (95개)
 ├── docs/                       # 설계 문서
 ├── data/
 │   ├── documents/              # 검색할 원본 문서
@@ -129,7 +130,7 @@ agentic-rag-bot/
 | `LLM_MODEL` | `gemma3:12b` | 사용할 LLM 모델 |
 | `MCP_CONFIG_PATH` | `mcp_config.json` | MCP 서버 설정 파일 경로 |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | ChromaDB 저장 경로 |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | 임베딩 모델 |
+| `EMBEDDING_MODEL` | `BAAI/bge-m3` | 임베딩 모델 (다국어/한국어 지원) |
 | `HITL_MODE` | `auto` | HITL 모드 (`auto`/`strict`/`off`) |
 
 ### 모델 교체
@@ -166,7 +167,7 @@ agentic-rag-bot/
 python -m pytest tests/ -v
 ```
 
-**69개 테스트** (단위 + 통합):
+**95개 테스트** (단위 + 통합):
 - `test_llm_adapter.py` - LLM 어댑터
 - `test_router.py` - 라우터 분류
 - `test_planner.py` - 쿼리 플래너
@@ -174,7 +175,8 @@ python -m pytest tests/ -v
 - `test_agent.py` - 에이전트 코어
 - `test_hitl.py` - HITL 신뢰도/피드백
 - `test_mcp_servers.py` - MCP 서버 프로토콜
-- `test_ingest.py` - 문서 인제스트
+- `test_ingest.py` - 문서 인제스트 (Parent-Child Chunking)
+- `test_retriever.py` - Advanced Retriever (BM25, RRF)
 - `test_integration.py` - 전체 파이프라인 E2E
 
 ## 설계 문서
@@ -186,3 +188,4 @@ python -m pytest tests/ -v
 - [Query Planner](docs/query-planner.md) - 쿼리 분석기 설계
 - [HITL](docs/human-in-the-loop.md) - 사람 개입 메커니즘
 - [Ollama + MCP](docs/mcp-integration.md) - 로컬 LLM + 플러그인 도구 설계
+- [Advanced RAG](docs/advanced-rag.md) - Hybrid Search + Parent-Child Chunking 설계

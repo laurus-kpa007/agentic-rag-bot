@@ -20,7 +20,7 @@ OLLAMA_URL=http://localhost:11434       # Ollama 서버 주소
 LLM_MODEL=gemma3:12b                   # 사용할 LLM 모델
 MCP_CONFIG_PATH=mcp_config.json        # MCP 서버 설정 경로
 CHROMA_PERSIST_DIR=./data/chroma       # ChromaDB 저장 경로
-EMBEDDING_MODEL=all-MiniLM-L6-v2       # 임베딩 모델명
+EMBEDDING_MODEL=BAAI/bge-m3       # 임베딩 모델명
 HITL_MODE=auto                         # HITL 모드 (auto/strict/off)
 ```
 
@@ -127,7 +127,7 @@ import json, sys
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = SentenceTransformer("BAAI/bge-m3")
 chroma = chromadb.PersistentClient(path="./data/chroma")
 
 TOOLS = [{
@@ -647,7 +647,7 @@ flowchart LR
     A["data/documents/"] --> B["파일 탐색<br/>(glob)"]
     B --> C["파일 읽기<br/>(로더)"]
     C --> D["텍스트 분할<br/>(500자 청크)"]
-    D --> E["임베딩 생성<br/>(all-MiniLM-L6-v2)"]
+    D --> E["임베딩 생성<br/>(BAAI/bge-m3)"]
     E --> F["ChromaDB 저장"]
 
     style A fill:#607D8B,color:#fff
@@ -687,7 +687,7 @@ def chunk_text(text: str) -> list[str]:
 def ingest_documents(docs_dir: str = "./data/documents"):
     """문서 디렉토리의 모든 파일을 벡터 DB에 인제스트한다."""
 
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    embedder = SentenceTransformer("BAAI/bge-m3")
     client = chromadb.PersistentClient(path="./data/chroma")
 
     # 기존 컬렉션이 있으면 삭제 후 재생성

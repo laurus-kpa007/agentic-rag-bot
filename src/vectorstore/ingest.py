@@ -70,7 +70,7 @@ def extract_keywords(text: str) -> list[str]:
 def ingest_documents(
     docs_dir: str = "./data/documents",
     chroma_dir: str = "./data/chroma",
-    embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_model: str = "BAAI/bge-m3",
 ):
     """Advanced RAG 방식으로 문서를 인제스트한다.
 

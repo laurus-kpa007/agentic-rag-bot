@@ -14,7 +14,7 @@ class Config:
         self.llm_model: str = os.getenv("LLM_MODEL", "gemma3:12b")
         self.mcp_config_path: str = os.getenv("MCP_CONFIG_PATH", "mcp_config.json")
         self.chroma_persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
-        self.embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        self.embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
         self.hitl_mode: str = os.getenv("HITL_MODE", "auto")
         self.max_tool_calls: int = int(os.getenv("MAX_TOOL_CALLS", "5"))
         self.max_history_turns: int = int(os.getenv("MAX_HISTORY_TURNS", "10"))

@@ -334,7 +334,7 @@ import json, sys
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = SentenceTransformer("BAAI/bge-m3")
 chroma = chromadb.PersistentClient(path="./data/chroma")
 
 TOOLS = [{
@@ -530,7 +530,7 @@ MCP_CONFIG_PATH=mcp_config.json
 
 # 벡터 DB
 CHROMA_PERSIST_DIR=./data/chroma
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+EMBEDDING_MODEL=BAAI/bge-m3
 
 # HITL
 HITL_MODE=auto
