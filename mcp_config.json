@@ -7,6 +7,10 @@
     "web-search": {
       "command": "python",
       "args": ["src/mcp_servers/web_search_server.py"]
+    },
+    "calculator": {
+      "command": "python",
+      "args": ["src/mcp_servers/calculator_server.py"]
     }
   }
 }

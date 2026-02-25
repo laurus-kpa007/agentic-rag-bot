@@ -11,7 +11,7 @@
     ↓
 [Query Planner] → 쿼리 최적화
     ↓
-[Agent Core] → MCP 도구 호출 (벡터 검색 / 웹 검색)
+[Agent Core] → MCP 도구 호출 (벡터 검색 / 웹 검색 / 계산기)
     ↓
 [Grader] → PASS → [HITL] → 답변 전달
     ↓ FAIL
@@ -105,11 +105,12 @@ agentic-rag-bot/
 │   │   └── generator.py
 │   ├── mcp_servers/            # 내장 MCP 서버 (플러그인)
 │   │   ├── vector_search_server.py
-│   │   └── web_search_server.py
+│   │   ├── web_search_server.py
+│   │   └── calculator_server.py
 │   ├── retriever.py               # Advanced Retriever (Hybrid Search + RRF)
 │   └── vectorstore/
 │       └── ingest.py           # 문서 인제스트 (Parent-Child Chunking)
-├── tests/                      # 단위 + 통합 테스트 (95개)
+├── tests/                      # 단위 + 통합 테스트 (117개)
 ├── docs/                       # 설계 문서
 ├── data/
 │   ├── documents/              # 검색할 원본 문서
@@ -152,14 +153,19 @@ agentic-rag-bot/
   "mcpServers": {
     "vector-search": { "command": "python", "args": ["src/mcp_servers/vector_search_server.py"] },
     "web-search": { "command": "python", "args": ["src/mcp_servers/web_search_server.py"] },
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": { "SLACK_TOKEN": "${SLACK_TOKEN}" }
-    }
+    "calculator": { "command": "python", "args": ["src/mcp_servers/calculator_server.py"] }
   }
 }
 ```
+
+### 내장 MCP 도구
+
+| 도구 | 서버 | 설명 |
+|------|------|------|
+| `search_vector_db` | vector-search | 사내 문서 Hybrid Search (벡터 + BM25) |
+| `web_search` | web-search | DuckDuckGo 웹 검색 |
+| `calculate` | calculator | 안전한 수식 계산 (사칙연산, 함수) |
+| `calculate_income_tax` | calculator | 한국 종합소득세 누진세 계산 |
 
 ## 테스트
 
@@ -167,7 +173,7 @@ agentic-rag-bot/
 python -m pytest tests/ -v
 ```
 
-**95개 테스트** (단위 + 통합):
+**117개 테스트** (단위 + 통합):
 - `test_llm_adapter.py` - LLM 어댑터
 - `test_router.py` - 라우터 분류
 - `test_planner.py` - 쿼리 플래너
@@ -175,6 +181,7 @@ python -m pytest tests/ -v
 - `test_agent.py` - 에이전트 코어
 - `test_hitl.py` - HITL 신뢰도/피드백
 - `test_mcp_servers.py` - MCP 서버 프로토콜
+- `test_calculator.py` - 계산기 (수식 평가, 소득세 계산)
 - `test_ingest.py` - 문서 인제스트 (Parent-Child Chunking)
 - `test_retriever.py` - Advanced Retriever (BM25, RRF)
 - `test_integration.py` - 전체 파이프라인 E2E
