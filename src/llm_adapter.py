@@ -5,7 +5,11 @@ Ollama의 /api/chat 엔드포인트를 통해 Tool Calling을 수행한다.
 
 import json
 import uuid
+import urllib3
+
 import requests
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from dataclasses import dataclass, field
 
 
@@ -55,6 +59,7 @@ class OllamaAdapter:
             f"{self.base_url}/api/chat",
             json=payload,
             timeout=120,
+            verify=False,
         )
         resp.raise_for_status()
         msg = resp.json().get("message", {})

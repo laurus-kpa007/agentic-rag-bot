@@ -5,9 +5,12 @@ SentenceTransformer와 동일한 인터페이스(encode)를 제공하여 기존 
 """
 
 import os
+import urllib3
 
 import numpy as np
 import requests
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
@@ -40,6 +43,7 @@ class OllamaEmbedder:
             f"{self.base_url}/api/embed",
             json={"model": self.model, "input": texts},
             timeout=120,
+            verify=False,
         )
         response.raise_for_status()
         data = response.json()
