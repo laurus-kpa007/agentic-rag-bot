@@ -10,8 +10,21 @@
 
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
+
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+
+class _NoOpEF:
+    """chromadb 기본 EF(onnx 다운로드)를 방지하는 더미."""
+
+    def __call__(self, input):
+        return [[0.0] * 10 for _ in input]
+
+
+_noop_ef = _NoOpEF()
 
 
 @dataclass
@@ -130,8 +143,12 @@ class AdvancedRetriever:
     ) -> list[RetrievalResult]:
         """Advanced Hybrid Search를 수행한다."""
         try:
-            children_col = self.chroma.get_collection("children")
-            parents_col = self.chroma.get_collection("parents")
+            children_col = self.chroma.get_collection(
+                "children", embedding_function=_noop_ef,
+            )
+            parents_col = self.chroma.get_collection(
+                "parents", embedding_function=_noop_ef,
+            )
         except Exception:
             return []
 
