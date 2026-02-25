@@ -114,15 +114,26 @@ def process_query(
     )
 
     # Phase 1: Tool Calling 기반 검색
+    # 원본 질문을 함께 전달하여 LLM이 맥락을 이해하도록 함
+    search_hint = plan.search_queries[0]
+    if search_hint != query:
+        user_content = f"{query}\n\n(검색 키워드 힌트: {search_hint})"
+    else:
+        user_content = query
+
     messages = conversation_history + [
-        {"role": "user", "content": plan.search_queries[0]}
+        {"role": "user", "content": user_content}
     ]
 
     if plan.is_multi():
         all_documents = []
         answer = ""
         for sq in plan.search_queries:
-            msgs = conversation_history + [{"role": "user", "content": sq}]
+            if sq != query:
+                content = f"{query}\n\n(검색 키워드 힌트: {sq})"
+            else:
+                content = query
+            msgs = conversation_history + [{"role": "user", "content": content}]
             ans, docs = agent.run(msgs, tool_filter=tool_filter)
             all_documents.extend(docs)
             answer = ans  # 마지막 답변 사용
