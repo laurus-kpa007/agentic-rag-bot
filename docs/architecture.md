@@ -381,7 +381,7 @@ flowchart LR
     subgraph "전처리 파이프라인"
         Loader["Document Loader<br/>(파일 읽기)"]
         Splitter["Text Splitter<br/>(청크 분할)"]
-        Embedder["Embedding Model<br/>(BAAI/bge-m3)"]
+        Embedder["Embedding Model<br/>(bona/bge-m3-korean)"]
     end
 
     subgraph "저장소"

@@ -122,7 +122,7 @@ class TestContextualHeader:
 
 
 class TestIngestDocuments:
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_ingest_creates_two_collections(self, mock_st_class):
         """인제스트 시 children + parents 2개 컬렉션 생성."""
         mock_st_class.return_value = _make_dynamic_embedder()
@@ -146,7 +146,7 @@ class TestIngestDocuments:
             assert children.count() >= 1
             assert parents.count() >= 1
 
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_child_has_parent_id(self, mock_st_class):
         """Child 메타데이터에 parent_id가 존재."""
         mock_st_class.return_value = _make_dynamic_embedder()
@@ -167,7 +167,7 @@ class TestIngestDocuments:
             data = children.get(limit=1)
             assert "parent_id" in data["metadatas"][0]
 
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_child_has_contextual_header(self, mock_st_class):
         """Child 문서에 컨텍스트 헤더가 포함."""
         mock_st_class.return_value = _make_dynamic_embedder()
@@ -188,7 +188,7 @@ class TestIngestDocuments:
             data = children.get(limit=1)
             assert "[출처:" in data["documents"][0]
 
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_ingest_md_files(self, mock_st_class):
         """markdown 파일 인제스트."""
         mock_st_class.return_value = _make_dynamic_embedder()
@@ -204,7 +204,7 @@ class TestIngestDocuments:
             count = ingest_documents(docs_dir=docs_dir, chroma_dir=chroma_dir)
             assert count >= 1
 
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_ingest_empty_directory(self, mock_st_class):
         """빈 디렉토리 → 0개 인제스트."""
         mock_embedder = MagicMock()
@@ -218,7 +218,7 @@ class TestIngestDocuments:
             count = ingest_documents(docs_dir=docs_dir, chroma_dir=chroma_dir)
             assert count == 0
 
-    @patch("src.vectorstore.ingest.SentenceTransformer")
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_child_has_keywords_metadata(self, mock_st_class):
         """Child 메타데이터에 keywords가 포함."""
         mock_st_class.return_value = _make_dynamic_embedder()

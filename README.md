@@ -33,7 +33,7 @@
 - **LLM**: Ollama + gemma3:12b (로컬, 무료)
 - **도구 시스템**: MCP (Model Context Protocol) 플러그인 방식
 - **벡터 DB**: ChromaDB (로컬)
-- **임베딩**: sentence-transformers (BAAI/bge-m3, 다국어/한국어 지원)
+- **임베딩**: Ollama (bona/bge-m3-korean, 한국어 특화)
 
 ## 시작하기
 
@@ -43,6 +43,7 @@
 # Ollama 설치 및 모델 다운로드
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma3:12b
+ollama pull bona/bge-m3-korean:latest
 ```
 
 ### 2. 설치
@@ -90,6 +91,7 @@ agentic-rag-bot/
 │   ├── main.py                 # 진입점 (Phase 1~4 통합)
 │   ├── agent.py                # Agent Core (Tool Calling 루프)
 │   ├── llm_adapter.py          # OllamaAdapter (LLM 추상화)
+│   ├── embedding.py            # OllamaEmbedder (임베딩 추상화)
 │   ├── mcp_client.py           # MCP 클라이언트
 │   ├── router.py               # Router (의도 분류)
 │   ├── planner.py              # Query Planner (쿼리 최적화)
@@ -110,7 +112,7 @@ agentic-rag-bot/
 │   ├── retriever.py               # Advanced Retriever (Hybrid Search + RRF)
 │   └── vectorstore/
 │       └── ingest.py           # 문서 인제스트 (Parent-Child Chunking)
-├── tests/                      # 단위 + 통합 테스트 (117개)
+├── tests/                      # 단위 + 통합 테스트 (121개)
 ├── docs/                       # 설계 문서
 ├── data/
 │   ├── documents/              # 검색할 원본 문서
@@ -131,7 +133,7 @@ agentic-rag-bot/
 | `LLM_MODEL` | `gemma3:12b` | 사용할 LLM 모델 |
 | `MCP_CONFIG_PATH` | `mcp_config.json` | MCP 서버 설정 파일 경로 |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | ChromaDB 저장 경로 |
-| `EMBEDDING_MODEL` | `BAAI/bge-m3` | 임베딩 모델 (다국어/한국어 지원) |
+| `EMBEDDING_MODEL` | `bona/bge-m3-korean:latest` | Ollama 임베딩 모델 (한국어 특화) |
 | `HITL_MODE` | `auto` | HITL 모드 (`auto`/`strict`/`off`) |
 
 ### 모델 교체
@@ -173,7 +175,8 @@ agentic-rag-bot/
 python -m pytest tests/ -v
 ```
 
-**117개 테스트** (단위 + 통합):
+**121개 테스트** (단위 + 통합):
+- `test_embedding.py` - Ollama 임베딩 어댑터
 - `test_llm_adapter.py` - LLM 어댑터
 - `test_router.py` - 라우터 분류
 - `test_planner.py` - 쿼리 플래너

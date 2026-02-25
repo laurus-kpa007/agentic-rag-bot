@@ -332,9 +332,9 @@ class MCPClient:
 
 import json, sys
 import chromadb
-from sentence_transformers import SentenceTransformer
+from src.embedding import OllamaEmbedder
 
-embedder = SentenceTransformer("BAAI/bge-m3")
+embedder = OllamaEmbedder(model="bona/bge-m3-korean:latest")
 chroma = chromadb.PersistentClient(path="./data/chroma")
 
 TOOLS = [{
@@ -530,7 +530,7 @@ MCP_CONFIG_PATH=mcp_config.json
 
 # 벡터 DB
 CHROMA_PERSIST_DIR=./data/chroma
-EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_MODEL=bona/bge-m3-korean:latest
 
 # HITL
 HITL_MODE=auto
@@ -541,7 +541,7 @@ HITL_MODE=auto
 ```
 requests>=2.31.0
 chromadb>=0.5.0
-sentence-transformers>=3.0.0
+numpy>=1.24.0
 python-dotenv>=1.0.0
 ```
 
