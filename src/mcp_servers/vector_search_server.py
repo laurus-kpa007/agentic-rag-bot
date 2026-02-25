@@ -8,6 +8,8 @@ import json
 import os
 import sys
 
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
 

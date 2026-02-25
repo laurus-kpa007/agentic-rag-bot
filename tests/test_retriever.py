@@ -137,7 +137,7 @@ class TestAdvancedRetriever:
             "metadatas": [{"source": "doc.txt"}],
         }
 
-        def get_collection(name):
+        def get_collection(name, **kwargs):
             if name == "children":
                 return children_col
             elif name == "parents":

@@ -15,6 +15,15 @@ import chromadb
 
 from src.embedding import OllamaEmbedder
 
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+
+class _NoOpEmbeddingFunction(chromadb.EmbeddingFunction):
+    """chromadb가 기본 임베딩 함수(onnx 다운로드)를 사용하지 않도록 하는 더미 EF."""
+
+    def __call__(self, input):
+        return [[0.0] * 10 for _ in input]
+
 # Parent-Child 청크 파라미터
 PARENT_CHUNK_SIZE = 800
 PARENT_OVERLAP = 100
@@ -87,10 +96,14 @@ def ingest_documents(
         except Exception:
             pass
 
+    _noop_ef = _NoOpEmbeddingFunction()
     children_col = client.create_collection(
-        name="children", metadata={"hnsw:space": "cosine"}
+        name="children", metadata={"hnsw:space": "cosine"},
+        embedding_function=_noop_ef,
     )
-    parents_col = client.create_collection(name="parents")
+    parents_col = client.create_collection(
+        name="parents", embedding_function=_noop_ef,
+    )
 
     parent_chunks = []
     parent_metadatas = []
