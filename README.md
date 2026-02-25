@@ -30,7 +30,7 @@
 
 ### 기술 스택
 
-- **LLM**: Ollama + gemma3:12b (로컬, 무료)
+- **LLM**: Ollama + qwen3:14b (로컬, 무료, Tool Calling 지원)
 - **도구 시스템**: MCP (Model Context Protocol) 플러그인 방식
 - **벡터 DB**: ChromaDB (로컬)
 - **임베딩**: Ollama (bona/bge-m3-korean, 한국어 특화)
@@ -42,7 +42,7 @@
 ```bash
 # Ollama 설치 및 모델 다운로드
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma3:12b
+ollama pull qwen3:14b
 ollama pull bona/bge-m3-korean:latest
 ```
 
@@ -130,7 +130,7 @@ agentic-rag-bot/
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama 서버 주소 |
-| `LLM_MODEL` | `gemma3:12b` | 사용할 LLM 모델 |
+| `LLM_MODEL` | `qwen3:14b` | 사용할 LLM 모델 |
 | `MCP_CONFIG_PATH` | `mcp_config.json` | MCP 서버 설정 파일 경로 |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | ChromaDB 저장 경로 |
 | `EMBEDDING_MODEL` | `bona/bge-m3-korean:latest` | Ollama 임베딩 모델 (한국어 특화) |
@@ -140,11 +140,11 @@ agentic-rag-bot/
 
 `.env`의 `LLM_MODEL`만 변경하면 됩니다.
 
-| 모델 | VRAM | 한국어 | 특징 |
-|------|------|--------|------|
-| `gemma3:12b` | ~8GB | 양호 | 기본값 |
-| `qwen2.5:14b` | ~10GB | 우수 | 한국어 우선 시 |
-| `gemma3:27b` | ~18GB | 우수 | GPU 여유 있을 때 |
+| 모델 | VRAM | 한국어 | Tool Calling | 특징 |
+|------|------|--------|-------------|------|
+| `qwen3:14b` | ~10GB | 우수 | 안정적 | 기본값 |
+| `qwen3:8b` | ~6GB | 양호 | 안정적 | 경량 |
+| `qwen3:32b` | ~20GB | 우수 | 안정적 | GPU 여유 있을 때 |
 
 ## MCP 도구 확장
 

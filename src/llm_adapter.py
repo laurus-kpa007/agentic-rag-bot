@@ -30,7 +30,7 @@ class LLMResponse:
 
 
 class OllamaAdapter:
-    def __init__(self, model: str = "gemma3:12b", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "qwen3:14b", base_url: str = "http://localhost:11434"):
         self.model = model
         self.base_url = base_url.rstrip("/")
 
