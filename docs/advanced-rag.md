@@ -2,7 +2,7 @@
 
 ## 1. 기존 대비 변경점
 
-기존 단순 벡터 검색을 **Advanced RAG**로 교체한다. 파이프라인의 나머지(Router, Planner, Grader, HITL)는 그대로 유지한다. 임베딩 모델은 한국어 지원을 위해 `BAAI/bge-m3`를 사용한다.
+기존 단순 벡터 검색을 **Advanced RAG**로 교체한다. 파이프라인의 나머지(Router, Planner, Grader, HITL)는 그대로 유지한다. 임베딩 모델은 한국어 특화 `bona/bge-m3-korean`을 Ollama로 실행한다.
 
 | 항목 | 기존 (Basic RAG) | 변경 (Advanced RAG) |
 |------|-----------------|-------------------|

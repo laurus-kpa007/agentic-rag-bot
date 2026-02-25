@@ -117,7 +117,7 @@ graph LR
 | **LLM 추상화** | LLM Adapter (자체 구현) | `.env`에서 모델명만 바꿔 교체 가능 |
 | **도구 시스템** | MCP (Model Context Protocol) | 플러그인 방식 도구 확장, 코드 수정 없이 도구 추가 |
 | **벡터 DB** | ChromaDB | 로컬 실행 가능, 설정 간단, 임베딩 내장 |
-| **임베딩 모델** | `BAAI/bge-m3` (sentence-transformers) | 다국어 지원, 한국어 임베딩 품질 우수 |
+| **임베딩 모델** | `bona/bge-m3-korean` (Ollama) | 한국어 특화, Ollama 통합 실행 |
 | **웹 검색** | Tavily API 또는 DuckDuckGo | 프로그래매틱 검색 지원 |
 | **프레임워크** | 없음 (순수 Python) | 프레임워크 종속 배제 |
 

@@ -8,7 +8,7 @@
 # requirements.txt
 requests>=2.31.0              # Ollama API 호출
 chromadb>=0.5.0               # 벡터 데이터베이스
-sentence-transformers>=3.0.0  # 임베딩 모델
+numpy>=1.24.0                 # 임베딩 벡터 처리
 python-dotenv>=1.0.0          # 환경 변수 관리
 ```
 
@@ -20,7 +20,7 @@ OLLAMA_URL=http://localhost:11434       # Ollama 서버 주소
 LLM_MODEL=gemma3:12b                   # 사용할 LLM 모델
 MCP_CONFIG_PATH=mcp_config.json        # MCP 서버 설정 경로
 CHROMA_PERSIST_DIR=./data/chroma       # ChromaDB 저장 경로
-EMBEDDING_MODEL=BAAI/bge-m3       # 임베딩 모델명
+EMBEDDING_MODEL=bona/bge-m3-korean:latest  # Ollama 임베딩 모델
 HITL_MODE=auto                         # HITL 모드 (auto/strict/off)
 ```
 
@@ -125,9 +125,9 @@ class AgentCore:
 
 import json, sys
 import chromadb
-from sentence_transformers import SentenceTransformer
+from src.embedding import OllamaEmbedder
 
-embedder = SentenceTransformer("BAAI/bge-m3")
+embedder = OllamaEmbedder(model="bona/bge-m3-korean:latest")
 chroma = chromadb.PersistentClient(path="./data/chroma")
 
 TOOLS = [{
@@ -647,7 +647,7 @@ flowchart LR
     A["data/documents/"] --> B["파일 탐색<br/>(glob)"]
     B --> C["파일 읽기<br/>(로더)"]
     C --> D["텍스트 분할<br/>(500자 청크)"]
-    D --> E["임베딩 생성<br/>(BAAI/bge-m3)"]
+    D --> E["임베딩 생성<br/>(bona/bge-m3-korean)"]
     E --> F["ChromaDB 저장"]
 
     style A fill:#607D8B,color:#fff
@@ -668,7 +668,7 @@ data/documents/ 폴더의 파일을 읽어 ChromaDB에 벡터로 저장한다.
 import os
 import glob
 import chromadb
-from sentence_transformers import SentenceTransformer
+from src.embedding import OllamaEmbedder
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -687,7 +687,7 @@ def chunk_text(text: str) -> list[str]:
 def ingest_documents(docs_dir: str = "./data/documents"):
     """문서 디렉토리의 모든 파일을 벡터 DB에 인제스트한다."""
 
-    embedder = SentenceTransformer("BAAI/bge-m3")
+    embedder = OllamaEmbedder(model="bona/bge-m3-korean:latest")
     client = chromadb.PersistentClient(path="./data/chroma")
 
     # 기존 컬렉션이 있으면 삭제 후 재생성

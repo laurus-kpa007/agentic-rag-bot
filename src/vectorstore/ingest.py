@@ -12,7 +12,8 @@ import os
 import re
 
 import chromadb
-from sentence_transformers import SentenceTransformer
+
+from src.embedding import OllamaEmbedder
 
 # Parent-Child 청크 파라미터
 PARENT_CHUNK_SIZE = 800
@@ -70,13 +71,13 @@ def extract_keywords(text: str) -> list[str]:
 def ingest_documents(
     docs_dir: str = "./data/documents",
     chroma_dir: str = "./data/chroma",
-    embedding_model: str = "BAAI/bge-m3",
+    embedding_model: str = "bona/bge-m3-korean:latest",
 ):
     """Advanced RAG 방식으로 문서를 인제스트한다.
 
     Parent-Child 이중 청크 + Contextual Headers + BM25 키워드 메타데이터.
     """
-    embedder = SentenceTransformer(embedding_model)
+    embedder = OllamaEmbedder(model=embedding_model)
     client = chromadb.PersistentClient(path=chroma_dir)
 
     # 기존 컬렉션 삭제

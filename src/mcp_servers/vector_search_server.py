@@ -9,7 +9,7 @@ import os
 import sys
 
 CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
 
 # Lazy 초기화 (서버 시작 시가 아니라 첫 검색 호출 시 로딩)
 _embedder = None
@@ -20,8 +20,8 @@ _retriever = None
 def _get_embedder():
     global _embedder
     if _embedder is None:
-        from sentence_transformers import SentenceTransformer
-        _embedder = SentenceTransformer(EMBEDDING_MODEL)
+        from src.embedding import OllamaEmbedder
+        _embedder = OllamaEmbedder(model=EMBEDDING_MODEL)
     return _embedder
 
 
