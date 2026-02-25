@@ -10,10 +10,15 @@ import glob
 import math
 import os
 import re
+import ssl
 
 import chromadb
 
 from src.embedding import OllamaEmbedder
+
+# SSL 인증서 검증 비활성화 (사내 프록시/인증서 이슈 대응)
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 # Parent-Child 청크 파라미터
 PARENT_CHUNK_SIZE = 800

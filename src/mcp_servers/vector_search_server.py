@@ -6,7 +6,12 @@ Hybrid Search (Vector + BM25) + RRF + Parent Lookup을 수행한다.
 
 import json
 import os
+import ssl
 import sys
+
+# SSL 인증서 검증 비활성화 (사내 프록시/인증서 이슈 대응)
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
