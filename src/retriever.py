@@ -2,7 +2,7 @@
 
 기본 벡터 검색을 대체하는 고급 검색 모듈이다.
 1. Vector Search: 의미적 유사도 기반 검색
-2. BM25 Search: 키워드 매칭 기반 검색
+2. BM25 Search: 키워드 매칭 기반 검색 (한국어 바이그램 지원)
 3. RRF (Reciprocal Rank Fusion): 두 결과를 순위 기반으로 합산
 4. LLM Reranking: 상위 결과를 LLM으로 관련도 재정렬
 5. Parent Lookup: Child 매칭 → Parent 컨텍스트 확장
@@ -40,7 +40,7 @@ class RetrievalResult:
 
 
 class BM25:
-    """순수 Python BM25 구현 (외부 의존성 없음)."""
+    """순수 Python BM25 구현 (한국어 바이그램 지원)."""
 
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
@@ -51,10 +51,12 @@ class BM25:
         self.term_freqs: list[dict[str, int]] = []
         self.doc_freq: dict[str, int] = {}
         self.documents: list[dict] = []
+        self.doc_ids: list[str] = []
 
     def index(self, documents: list[dict]):
         """문서 목록을 BM25 인덱스에 추가한다."""
         self.documents = documents
+        self.doc_ids = [d.get("id", str(i)) for i, d in enumerate(documents)]
         self.doc_count = len(documents)
 
         total_length = 0
@@ -100,8 +102,22 @@ class BM25:
         return scores[:top_k]
 
     def _tokenize(self, text: str) -> list[str]:
-        """한국어 + 영어 토큰 추출."""
-        return re.findall(r"[가-힣a-zA-Z0-9]{2,}", text.lower())
+        """한국어 + 영어 토큰 추출 (한국어 바이그램 포함).
+
+        한국어/영어/숫자를 분리 추출하고, 한국어 복합어(3자 이상)는
+        2-gram으로 분해하여 부분 매칭을 지원한다.
+        예: "연차휴가신청" → ["연차휴가신청", "연차", "차휴", "휴가", "가신", "신청"]
+        """
+        words = re.findall(r"[가-힣]{2,}|[a-zA-Z]{2,}|[0-9]+", text.lower())
+        tokens = list(words)
+
+        # 한국어 복합어를 바이그램으로 분해
+        for word in words:
+            if len(word) > 2 and re.match(r'^[가-힣]+$', word):
+                for i in range(len(word) - 1):
+                    tokens.append(word[i:i + 2])
+
+        return tokens
 
 
 def reciprocal_rank_fusion(
@@ -134,6 +150,8 @@ class AdvancedRetriever:
         self.llm = llm  # Optional: LLM reranking용
         self.bm25 = BM25()
         self._bm25_indexed = False
+        self._bm25_original_docs: list[str] = []
+        self._bm25_original_metas: list[dict] = []
 
     def search(
         self,
@@ -169,7 +187,7 @@ class AdvancedRetriever:
         vector_ids = vector_raw["ids"][0] if vector_raw["ids"] else []
         vector_distances = vector_raw["distances"][0] if vector_raw.get("distances") else []
 
-        # ID → index 매핑
+        # ID → data 매핑
         id_to_data = {}
         for i, doc_id in enumerate(vector_ids):
             id_to_data[doc_id] = {
@@ -178,31 +196,24 @@ class AdvancedRetriever:
                 "distance": vector_distances[i] if i < len(vector_distances) else 1.0,
             }
 
-        vector_results = [(i, 1.0 - (vector_distances[i] if i < len(vector_distances) else 1.0))
-                          for i in range(len(vector_ids))]
-
         # 2. BM25 Search
         bm25_results = self.bm25.search(query, top_k=candidate_k)
 
-        # BM25 결과의 ID 가져오기
+        # BM25 결과의 ID를 저장된 인덱스에서 직접 매핑 (매 검색마다 전체 로드 제거)
         bm25_id_map = {}
-        all_child_data = children_col.get(limit=children_col.count())
-        all_ids = all_child_data["ids"]
         for rank_idx, (doc_idx, score) in enumerate(bm25_results):
-            if doc_idx < len(all_ids):
-                bm25_doc_id = all_ids[doc_idx]
+            if doc_idx < len(self.bm25.doc_ids):
+                bm25_doc_id = self.bm25.doc_ids[doc_idx]
                 bm25_id_map[doc_idx] = bm25_doc_id
                 if bm25_doc_id not in id_to_data:
                     # BM25에서만 나온 결과도 수집
-                    idx_in_all = doc_idx
                     id_to_data[bm25_doc_id] = {
-                        "content": all_child_data["documents"][idx_in_all],
-                        "metadata": all_child_data["metadatas"][idx_in_all],
+                        "content": self._bm25_original_docs[doc_idx],
+                        "metadata": self._bm25_original_metas[doc_idx],
                         "distance": 0.5,  # BM25 전용은 distance 없음
                     }
 
         # 3. RRF 합산 — 통합 인덱스 기반
-        # vector는 0~N-1 인덱스, BM25는 전체 컬렉션 인덱스 → 통합 필요
         unified_vector = []
         for i, doc_id in enumerate(vector_ids):
             unified_vector.append((doc_id, 1.0 - id_to_data[doc_id]["distance"]))
@@ -265,23 +276,40 @@ class AdvancedRetriever:
         return results
 
     def _build_bm25_index(self, children_col):
-        """Children 컬렉션으로 BM25 인덱스를 구축한다."""
+        """Children 컬렉션으로 BM25 인덱스를 구축한다.
+
+        헤더 노이즈를 제거하고, 문서 ID를 함께 저장하여
+        검색 시 안정적인 ID 매핑을 보장한다.
+        """
         try:
             count = children_col.count()
             if count == 0:
                 return
             all_data = children_col.get(limit=count)
+
+            # 원본 데이터 보존 (검색 시 BM25 전용 결과 조회용)
+            self._bm25_original_docs = all_data["documents"]
+            self._bm25_original_metas = all_data["metadatas"]
+
             documents = []
             for i, doc in enumerate(all_data["documents"]):
                 meta = all_data["metadatas"][i] if all_data["metadatas"] else {}
+                # 헤더 노이즈를 제거한 원본 텍스트로 인덱싱
+                content = self._strip_contextual_header(doc)
                 documents.append({
-                    "content": doc,
+                    "id": all_data["ids"][i],
+                    "content": content,
                     "keywords": meta.get("keywords", ""),
                 })
             self.bm25.index(documents)
             self._bm25_indexed = True
         except Exception as e:
             print(f"  [Retriever] BM25 인덱스 구축 실패: {e}")
+
+    @staticmethod
+    def _strip_contextual_header(text: str) -> str:
+        """[출처: ...] 컨텍스트 헤더를 제거한다."""
+        return re.sub(r'^\[출처:.*?\]\n?', '', text)
 
     def _llm_rerank(self, query: str, results: list[RetrievalResult]) -> list[RetrievalResult]:
         """LLM으로 검색 결과의 관련도를 재정렬한다."""

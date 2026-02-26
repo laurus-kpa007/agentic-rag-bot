@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock
 from src.vectorstore.ingest import (
     chunk_text,
     split_into_chunks,
+    _find_sentence_boundary,
     extract_title,
     extract_keywords,
     make_contextual_header,
@@ -59,6 +60,35 @@ class TestSplitIntoChunks:
         chunks = split_into_chunks(text, 200, 30)
         for chunk in chunks:
             assert chunk.strip()
+
+
+class TestSentenceBoundary:
+    def test_snaps_to_period(self):
+        """마침표가 tolerance(청크 끝 20%) 이내에 있으면 거기서 끊는다."""
+        # 마침표가 90번째 위치 → 100자 청크의 마지막 20% 이내
+        text = "A" * 89 + "." + "B" * 200
+        chunks = split_into_chunks(text, 100, 10)
+        assert chunks[0].endswith(".")
+
+    def test_snaps_to_newline(self):
+        """줄바꿈 위치에서 청크를 끊는다."""
+        text = "첫 번째 문단 내용\n두 번째 문단" + "B" * 200
+        chunks = split_into_chunks(text, 20, 3)
+        assert "첫 번째 문단 내용" in chunks[0]
+
+    def test_fallback_without_boundary(self):
+        """문장 경계가 없으면 문자 수 기준으로 끊는다."""
+        text = "A" * 1000
+        chunks = split_into_chunks(text, 200, 30)
+        for chunk in chunks:
+            assert len(chunk) <= 200
+
+    def test_find_boundary_function(self):
+        """_find_sentence_boundary가 tolerance 이내 가장 가까운 경계를 반환."""
+        # 마침표가 인덱스 85 → chunk_end=100의 20% tolerance(80~99) 이내
+        text = "A" * 85 + "." + "B" * 50
+        boundary = _find_sentence_boundary(text, 0, 100)
+        assert boundary == 86  # 마침표(85) 다음 위치
 
 
 class TestChunkTextBackcompat:
@@ -217,6 +247,27 @@ class TestIngestDocuments:
 
             count = ingest_documents(docs_dir=docs_dir, chroma_dir=chroma_dir)
             assert count == 0
+
+    @patch("src.vectorstore.ingest.OllamaEmbedder")
+    def test_embedding_uses_raw_text_without_header(self, mock_st_class):
+        """임베딩은 헤더 없는 원본 텍스트로 생성되어야 한다."""
+        mock_embedder = _make_dynamic_embedder()
+        mock_st_class.return_value = mock_embedder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docs_dir = os.path.join(tmpdir, "documents")
+            chroma_dir = os.path.join(tmpdir, "chroma")
+            os.makedirs(docs_dir)
+
+            with open(os.path.join(docs_dir, "policy.txt"), "w") as f:
+                f.write("연차 휴가 정책 안내: 모든 직원에게 연 15일의 연차가 부여됩니다." * 3)
+
+            ingest_documents(docs_dir=docs_dir, chroma_dir=chroma_dir)
+
+            # encode()에 전달된 텍스트에 [출처:] 헤더가 없어야 함
+            call_args = mock_embedder.encode.call_args[0][0]
+            for text in call_args:
+                assert "[출처:" not in text
 
     @patch("src.vectorstore.ingest.OllamaEmbedder")
     def test_child_has_keywords_metadata(self, mock_st_class):

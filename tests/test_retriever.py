@@ -66,6 +66,48 @@ class TestBM25:
         assert "b" not in tokens
 
 
+    def test_tokenizer_korean_bigrams(self):
+        """한국어 복합어가 바이그램으로 분해된다."""
+        bm25 = BM25()
+        tokens = bm25._tokenize("연차휴가신청")
+        # 원본 토큰
+        assert "연차휴가신청" in tokens
+        # 바이그램
+        assert "연차" in tokens
+        assert "휴가" in tokens
+        assert "신청" in tokens
+
+    def test_bigram_enables_partial_match(self):
+        """복합어 문서에서 부분 키워드로 검색이 된다."""
+        bm25 = BM25()
+        docs = [
+            {"content": "연차휴가신청절차 안내", "keywords": ""},
+            {"content": "출장비 정산 방법", "keywords": ""},
+        ]
+        bm25.index(docs)
+        results = bm25.search("연차", top_k=2)
+        # 첫 번째 결과가 연차 관련 문서여야 함
+        assert results[0][0] == 0
+        assert results[0][1] > 0
+
+    def test_doc_ids_stored(self):
+        """인덱싱 시 문서 ID가 저장된다."""
+        bm25 = BM25()
+        docs = [
+            {"id": "doc_a", "content": "문서 A", "keywords": ""},
+            {"id": "doc_b", "content": "문서 B", "keywords": ""},
+        ]
+        bm25.index(docs)
+        assert bm25.doc_ids == ["doc_a", "doc_b"]
+
+    def test_doc_ids_auto_generated(self):
+        """ID가 없으면 인덱스 번호로 자동 생성된다."""
+        bm25 = BM25()
+        docs = [{"content": "문서 A"}, {"content": "문서 B"}]
+        bm25.index(docs)
+        assert bm25.doc_ids == ["0", "1"]
+
+
 class TestRRF:
     def test_single_source(self):
         """단일 소스 RRF 스코어."""
@@ -219,3 +261,16 @@ class TestAdvancedRetriever:
 
         for r in results:
             assert r.rrf_score > 0
+
+    def test_strip_contextual_header(self):
+        """BM25 인덱싱 시 [출처:] 헤더가 제거된다."""
+        text_with_header = "[출처: doc.txt | 제목 | 섹션 1/3]\n실제 본문 내용입니다."
+        stripped = AdvancedRetriever._strip_contextual_header(text_with_header)
+        assert "[출처:" not in stripped
+        assert "실제 본문 내용입니다." in stripped
+
+    def test_strip_header_without_header(self):
+        """헤더가 없는 텍스트는 그대로 반환."""
+        text = "일반 텍스트입니다."
+        stripped = AdvancedRetriever._strip_contextual_header(text)
+        assert stripped == text

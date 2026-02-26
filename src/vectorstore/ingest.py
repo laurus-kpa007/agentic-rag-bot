@@ -2,8 +2,9 @@
 
 Parent-Child Chunking + Contextual Headers를 적용한다.
 - Parent 청크 (800자): LLM에 전달할 충분한 컨텍스트
-- Child 청크 (200자): 벡터 검색 정밀도 최적화
+- Child 청크 (400자): 벡터 검색 정밀도 최적화
 - Contextual Header: 각 Child에 문서명/섹션 정보 삽입
+- 임베딩은 헤더 없는 원본 텍스트로, 저장은 헤더 포함 텍스트로 분리
 """
 
 import glob
@@ -30,8 +31,8 @@ class _NoOpEmbeddingFunction(chromadb.EmbeddingFunction):
 # Parent-Child 청크 파라미터
 PARENT_CHUNK_SIZE = 800
 PARENT_OVERLAP = 100
-CHILD_CHUNK_SIZE = 200
-CHILD_OVERLAP = 30
+CHILD_CHUNK_SIZE = 400
+CHILD_OVERLAP = 50
 
 
 def extract_title(text: str, filename: str) -> str:
@@ -45,16 +46,47 @@ def extract_title(text: str, filename: str) -> str:
     return filename
 
 
+def _find_sentence_boundary(text: str, chunk_start: int, chunk_end: int) -> int:
+    """chunk_end 근처에서 문장 경계를 찾아 반환한다.
+
+    chunk_end에서 역방향으로 청크 크기의 20% 이내를 탐색하여
+    가장 가까운 문장 종결 위치를 반환한다.
+    """
+    tolerance = (chunk_end - chunk_start) // 5
+    search_limit = max(chunk_start, chunk_end - tolerance)
+
+    for i in range(chunk_end - 1, search_limit - 1, -1):
+        if text[i] in '.!?\n':
+            return i + 1
+
+    return chunk_end
+
+
 def split_into_chunks(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """텍스트를 고정 크기 청크로 분할한다."""
+    """텍스트를 문장 경계를 고려하여 청크로 분할한다."""
+    if not text or not text.strip():
+        return []
+
     chunks = []
     start = 0
-    while start < len(text):
-        end = start + chunk_size
+    text_len = len(text)
+
+    while start < text_len:
+        end = min(start + chunk_size, text_len)
+
+        # 끝이 아니면 문장 경계로 스냅
+        if end < text_len:
+            end = _find_sentence_boundary(text, start, end)
+
         chunk = text[start:end]
         if chunk.strip():
-            chunks.append(chunk)
-        start = end - overlap
+            chunks.append(chunk.strip())
+
+        next_start = end - overlap
+        if next_start <= start:
+            next_start = end
+        start = next_start
+
     return chunks
 
 
@@ -88,6 +120,7 @@ def ingest_documents(
     """Advanced RAG 방식으로 문서를 인제스트한다.
 
     Parent-Child 이중 청크 + Contextual Headers + BM25 키워드 메타데이터.
+    임베딩은 헤더 없는 원본 텍스트로, 저장은 헤더 포함 텍스트로 분리한다.
     """
     embedder = OllamaEmbedder(model=embedding_model)
     client = chromadb.PersistentClient(path=chroma_dir)
@@ -112,7 +145,8 @@ def ingest_documents(
     parent_metadatas = []
     parent_ids = []
 
-    child_chunks = []
+    child_chunks_for_embedding = []  # 임베딩용 (헤더 없는 원본)
+    child_chunks_for_storage = []    # 저장용 (헤더 포함)
     child_metadatas = []
     child_ids = []
 
@@ -155,7 +189,8 @@ def ingest_documents(
                     child_id = f"{filename}_p{p_idx}_c{c_idx}"
                     child_keywords = extract_keywords(child_text)
 
-                    child_chunks.append(enriched_child)
+                    child_chunks_for_embedding.append(child_text)
+                    child_chunks_for_storage.append(enriched_child)
                     child_metadatas.append({
                         "source": filename,
                         "title": title,
@@ -166,14 +201,14 @@ def ingest_documents(
                     })
                     child_ids.append(child_id)
 
-    if not child_chunks:
+    if not child_chunks_for_storage:
         print("인제스트할 문서가 없습니다.")
         return 0
 
-    # Child 청크 임베딩 & 저장
-    child_embeddings = embedder.encode(child_chunks).tolist()
+    # 임베딩은 헤더 없는 원본 텍스트로 생성
+    child_embeddings = embedder.encode(child_chunks_for_embedding).tolist()
     children_col.add(
-        documents=child_chunks,
+        documents=child_chunks_for_storage,
         embeddings=child_embeddings,
         metadatas=child_metadatas,
         ids=child_ids,
@@ -186,8 +221,8 @@ def ingest_documents(
         ids=parent_ids,
     )
 
-    print(f"인제스트 완료: Parent {len(parent_chunks)}개, Child {len(child_chunks)}개")
-    return len(child_chunks)
+    print(f"인제스트 완료: Parent {len(parent_chunks)}개, Child {len(child_chunks_for_storage)}개")
+    return len(child_chunks_for_storage)
 
 
 if __name__ == "__main__":
