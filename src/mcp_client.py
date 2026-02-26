@@ -5,6 +5,7 @@ Agent Core가 도구를 호출할 때 해당 MCP 서버로 요청을 중계한�
 """
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,8 @@ class MCPTool:
 class MCPClient:
     def __init__(self, config_path: str = "mcp_config.json"):
         self.config_path = Path(config_path)
+        # MCP 서버의 작업 디렉토리를 프로젝트 루트로 고정
+        self.project_root = str(self.config_path.resolve().parent)
         self.servers: dict[str, subprocess.Popen] = {}
         self.tools: dict[str, MCPTool] = {}
 
@@ -49,7 +52,8 @@ class MCPClient:
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=None,  # MCP 서버 stderr을 터미널에 표시 (디버그 로그용)
-                    env={**__import__("os").environ, **cfg.get("env", {})},
+                    cwd=self.project_root,
+                    env={**os.environ, **cfg.get("env", {})},
                 )
                 self.servers[name] = proc
 
