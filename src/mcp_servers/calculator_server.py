@@ -10,6 +10,14 @@ import math
 import operator
 import sys
 
+# Windows CP949 → UTF-8 인코딩 강제 (UnicodeDecodeError 방지)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 
 # 허용할 연산자 매핑
 _OPERATORS = {

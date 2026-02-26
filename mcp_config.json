@@ -1,15 +1,15 @@
 {
   "mcpServers": {
     "vector-search": {
-      "command": "python",
+      "command": "D:\\Python\\agentic-rag-bot\\venv\\Scripts\\python.exe",
       "args": ["src/mcp_servers/vector_search_server.py"]
     },
     "web-search": {
-      "command": "python",
+      "command": "D:\\Python\\agentic-rag-bot\\venv\\Scripts\\python.exe",
       "args": ["src/mcp_servers/web_search_server.py"]
     },
     "calculator": {
-      "command": "python",
+      "command": "D:\\Python\\agentic-rag-bot\\venv\\Scripts\\python.exe",
       "args": ["src/mcp_servers/calculator_server.py"]
     }
   }
