@@ -135,9 +135,12 @@ if __name__ == "__main__":
             sys.stdout.write(json.dumps(response) + "\n")
             sys.stdout.flush()
         except Exception as e:
+            import traceback
+            print(f"  [MCP:vector-search] ERROR: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             error_resp = {
                 "jsonrpc": "2.0",
-                "id": None,
+                "id": req.get("id") if isinstance(req, dict) else None,
                 "error": {"code": -32603, "message": str(e)},
             }
             sys.stdout.write(json.dumps(error_resp) + "\n")
