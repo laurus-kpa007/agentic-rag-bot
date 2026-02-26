@@ -21,6 +21,8 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 class _NoOpEF:
     """chromadb 기본 EF(onnx 다운로드)를 방지하는 더미."""
 
+    name = "noop"
+
     def __call__(self, input):
         return [[0.0] * 10 for _ in input]
 
