@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -144,14 +145,20 @@ def reciprocal_rank_fusion(
 class AdvancedRetriever:
     """Hybrid Search + RRF + Parent Lookup + Optional LLM Reranking."""
 
-    def __init__(self, chroma_client, embedder, llm=None):
+    def __init__(self, chroma_client, embedder, llm=None, verbose=False):
         self.chroma = chroma_client
         self.embedder = embedder
         self.llm = llm  # Optional: LLM reranking용
+        self.verbose = verbose
         self.bm25 = BM25()
         self._bm25_indexed = False
         self._bm25_original_docs: list[str] = []
         self._bm25_original_metas: list[dict] = []
+
+    def _log(self, msg: str):
+        """verbose 모드일 때 디버그 로그를 stderr로 출력한다."""
+        if self.verbose:
+            print(f"  [Retriever] {msg}", file=sys.stderr)
 
     def search(
         self,
@@ -178,6 +185,8 @@ class AdvancedRetriever:
         # 검색 후보 수 (RRF 합산 전) — 더 넓은 후보군 확보
         candidate_k = min(top_k * 4, 20)
 
+        self._log(f"쿼리: '{query}' (top_k={top_k}, candidate_k={candidate_k})")
+
         # 1. Vector Search
         query_embedding = self.embedder.encode(query).tolist()
         vector_raw = children_col.query(
@@ -186,6 +195,12 @@ class AdvancedRetriever:
         )
         vector_ids = vector_raw["ids"][0] if vector_raw["ids"] else []
         vector_distances = vector_raw["distances"][0] if vector_raw.get("distances") else []
+
+        self._log(f"--- Vector Search 결과: {len(vector_ids)}건 ---")
+        for i, vid in enumerate(vector_ids):
+            dist = vector_distances[i] if i < len(vector_distances) else "?"
+            preview = vector_raw["documents"][0][i][:60].replace("\n", " ") if vector_raw["documents"][0] else ""
+            self._log(f"  V[{i+1}] id={vid} distance={dist:.4f} | {preview}...")
 
         # ID → data 매핑
         id_to_data = {}
@@ -198,6 +213,11 @@ class AdvancedRetriever:
 
         # 2. BM25 Search
         bm25_results = self.bm25.search(query, top_k=candidate_k)
+
+        self._log(f"--- BM25 Search 결과: {len(bm25_results)}건 ---")
+        for rank, (doc_idx, score) in enumerate(bm25_results[:10]):
+            doc_id = self.bm25.doc_ids[doc_idx] if doc_idx < len(self.bm25.doc_ids) else "?"
+            self._log(f"  B[{rank+1}] id={doc_id} score={score:.4f}")
 
         # BM25 결과의 ID를 저장된 인덱스에서 직접 매핑 (매 검색마다 전체 로드 제거)
         bm25_id_map = {}
@@ -231,6 +251,10 @@ class AdvancedRetriever:
             rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1 / (k + rank + 1)
 
         sorted_rrf = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+
+        self._log(f"--- RRF 합산 결과 (상위 {min(top_k * 2, len(sorted_rrf))}건) ---")
+        for doc_id, score in sorted_rrf[:top_k * 2]:
+            self._log(f"  RRF id={doc_id} score={score:.4f}")
 
         # 4. 상위 결과 수집 + Parent Lookup
         results = []
@@ -268,6 +292,11 @@ class AdvancedRetriever:
 
             if len(results) >= top_k:
                 break
+
+        self._log(f"--- 최종 반환: {len(results)}건 (Parent 중복 제거 후) ---")
+        for i, r in enumerate(results):
+            preview = r.parent_content[:60].replace("\n", " ")
+            self._log(f"  [{i+1}] parent_id={r.metadata.get('parent_id', '?')} rrf={r.rrf_score:.4f} dist={r.distance:.4f} | {preview}...")
 
         # 5. Optional LLM Reranking
         if use_reranking and self.llm and results:

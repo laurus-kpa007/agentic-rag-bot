@@ -1,12 +1,14 @@
 """main.py - Simple Agentic RAG 진입점
 
 Phase 1~4를 모두 통합한 최종 실행 파일이다.
-- Phase 1: 네이티브 Tool Calling (Ollama + MCP)
+- Phase 1: Planner 최적화 쿼리로 직접 검색 + LLM 답변 생성
 - Phase 2: Router 패턴
 - Phase 2.5: Query Planner
 - Phase 3: 단일 피드백 루프 (CRAG)
 - Phase 4: Human in the Loop
 """
+
+import json
 
 from src.config import Config
 from src.llm_adapter import OllamaAdapter
@@ -84,6 +86,59 @@ def main():
         mcp.disconnect_all()
 
 
+def _find_search_tool(mcp, route: str) -> str | None:
+    """라우트에 맞는 MCP 검색 도구 이름을 찾는다."""
+    keyword = "search_vector_db" if route == "INTERNAL_SEARCH" else "web_search"
+    for tool in mcp.get_tools_for_llm():
+        if keyword in tool["name"]:
+            return tool["name"]
+    return None
+
+
+def _parse_mcp_results(result_json: str) -> list[dict]:
+    """MCP 도구 호출 결과에서 문서 리스트를 추출한다."""
+    try:
+        result = json.loads(result_json)
+        if isinstance(result, dict) and "content" in result:
+            for item in result["content"]:
+                if item.get("type") == "text":
+                    docs = json.loads(item["text"])
+                    if isinstance(docs, list):
+                        return docs
+        elif isinstance(result, list):
+            return result
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+    return []
+
+
+def _dedup_documents(documents: list[dict]) -> list[dict]:
+    """문서 중복 제거."""
+    seen = set()
+    result = []
+    for doc in documents:
+        key = doc.get("content", "")[:100]
+        if key not in seen:
+            seen.add(key)
+            result.append(doc)
+    return result
+
+
+def _direct_search(mcp, tool_name: str, queries: list[str], top_k: int = 5) -> list[dict]:
+    """Planner의 최적화된 쿼리로 MCP 검색을 직접 수행한다."""
+    all_docs = []
+    for sq in queries:
+        result_json = mcp.call_tool(tool_name, {"query": sq, "top_k": top_k})
+        docs = _parse_mcp_results(result_json)
+        print(f"  [검색] '{sq}' → {len(docs)}건")
+        for i, doc in enumerate(docs):
+            dist = doc.get("distance", "?")
+            preview = doc.get("content", "")[:80].replace("\n", " ")
+            print(f"    [{i + 1}] (거리={dist}) {preview}...")
+        all_docs.extend(docs)
+    return _dedup_documents(all_docs)
+
+
 def process_query(
     query: str,
     conversation_history: list,
@@ -94,7 +149,12 @@ def process_query(
     rewriter: QueryRewriter,
     hitl: HITLManager,
 ) -> str:
-    """하나의 사용자 질문을 전체 파이프라인으로 처리한다."""
+    """하나의 사용자 질문을 전체 파이프라인으로 처리한다.
+
+    핵심 변경: Planner가 최적화한 검색어로 직접 MCP 검색을 수행한 뒤,
+    검색 결과를 LLM에게 전달하여 답변 생성에만 집중하도록 한다.
+    (기존: LLM이 도구 호출 쿼리를 독립적으로 결정 → Planner 쿼리 무시 가능)
+    """
 
     # Phase 2: 라우팅
     route = router.classify(query)
@@ -108,45 +168,20 @@ def process_query(
     print(f"  [플래닝] 의도: {plan.intent}")
     print(f"  [플래닝] 검색어: {plan.search_queries}")
 
-    # 도구 필터 결정
-    tool_filter = (
-        "search_vector_db" if route == "INTERNAL_SEARCH" else "web_search"
-    )
+    # Phase 1: Planner 쿼리로 직접 검색
+    tool_name = _find_search_tool(agent.mcp, route)
+    tool_filter = "search_vector_db" if route == "INTERNAL_SEARCH" else "web_search"
+    documents = []
 
-    # Phase 1: Tool Calling 기반 검색
-    # 원본 질문을 함께 전달하여 LLM이 맥락을 이해하도록 함
-    search_hint = plan.search_queries[0]
-    if search_hint != query:
-        user_content = f"{query}\n\n(검색 키워드 힌트: {search_hint})"
+    if tool_name:
+        documents = _direct_search(agent.mcp, tool_name, plan.search_queries)
+
+    # 검색 결과 기반 답변 생성
+    if documents:
+        answer = agent.answer_with_context(query, documents, conversation_history)
     else:
-        user_content = query
-
-    messages = conversation_history + [
-        {"role": "user", "content": user_content}
-    ]
-
-    if plan.is_multi():
-        all_documents = []
-        answer = ""
-        for sq in plan.search_queries:
-            if sq != query:
-                content = f"{query}\n\n(검색 키워드 힌트: {sq})"
-            else:
-                content = query
-            msgs = conversation_history + [{"role": "user", "content": content}]
-            ans, docs = agent.run(msgs, tool_filter=tool_filter)
-            all_documents.extend(docs)
-            answer = ans  # 마지막 답변 사용
-
-        # 중복 제거
-        seen = set()
-        documents = []
-        for doc in all_documents:
-            key = doc.get("content", "")[:100]
-            if key not in seen:
-                seen.add(key)
-                documents.append(doc)
-    else:
+        # 폴백: 기존 Agent 루프 (도구 호출 포함)
+        messages = conversation_history + [{"role": "user", "content": query}]
         answer, documents = agent.run(messages, tool_filter=tool_filter)
 
     # Phase 3: 검색 결과 평가
@@ -159,8 +194,12 @@ def process_query(
         if grade == "FAIL":
             rewritten = rewriter.rewrite(query)
             print(f"  [재작성] {rewritten}")
-            msgs = conversation_history + [{"role": "user", "content": rewritten}]
-            answer, documents = agent.run(msgs, tool_filter=tool_filter)
+            # 재작성된 쿼리로 직접 재검색
+            if tool_name:
+                new_docs = _direct_search(agent.mcp, tool_name, [rewritten])
+                if new_docs:
+                    documents = new_docs
+                    answer = agent.answer_with_context(query, documents, conversation_history)
             retry_count = 1
             grade = "PASS"  # 재검색 후 강제 진행
 
@@ -188,6 +227,13 @@ def process_query(
     elif decision.action == "edit":
         return decision.edited_answer
     elif decision.action == "retry":
+        # HITL 재시도도 직접 검색으로
+        if tool_name:
+            retry_docs = _direct_search(agent.mcp, tool_name, [decision.new_query])
+            if retry_docs:
+                return agent.answer_with_context(
+                    decision.new_query, retry_docs, conversation_history,
+                )
         msgs = conversation_history + [{"role": "user", "content": decision.new_query}]
         new_answer, _ = agent.run(msgs, tool_filter=tool_filter)
         return new_answer

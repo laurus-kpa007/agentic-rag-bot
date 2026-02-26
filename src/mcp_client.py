@@ -48,7 +48,7 @@ class MCPClient:
                     [cfg["command"]] + cfg.get("args", []),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=None,  # MCP 서버 stderr을 터미널에 표시 (디버그 로그용)
                     env={**__import__("os").environ, **cfg.get("env", {})},
                 )
                 self.servers[name] = proc
