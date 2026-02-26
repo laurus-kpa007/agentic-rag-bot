@@ -106,8 +106,13 @@ class MCPClient:
         proc.stdin.flush()
         line = proc.stdout.readline().decode()
         if not line:
+            print(f"  [MCP] 서버 응답 없음 (method={method})")
             return {}
-        return json.loads(line).get("result", {})
+        response = json.loads(line)
+        if "error" in response:
+            err = response["error"]
+            print(f"  [MCP] 서버 에러 (method={method}): {err.get('message', err)}")
+        return response.get("result", {})
 
     def disconnect_all(self):
         """모든 MCP 서버 프로세스를 종료한다."""
