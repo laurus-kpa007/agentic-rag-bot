@@ -100,5 +100,5 @@ class AgentCore:
                             documents.extend(docs)
             elif isinstance(result, list):
                 documents.extend(result)
-        except (json.JSONDecodeError, TypeError, KeyError):
-            pass
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            print(f"  [Agent] 문서 수집 실패: {e}")

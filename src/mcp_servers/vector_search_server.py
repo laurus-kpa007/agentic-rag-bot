@@ -56,7 +56,7 @@ TOOLS = [
                 "top_k": {
                     "type": "integer",
                     "description": "반환할 최대 문서 수",
-                    "default": 3,
+                    "default": 5,
                 },
             },
             "required": ["query"],
@@ -65,7 +65,7 @@ TOOLS = [
 ]
 
 
-def search(query: str, top_k: int = 3) -> dict:
+def search(query: str, top_k: int = 5) -> dict:
     retriever = _get_retriever()
     results = retriever.search(query=query, top_k=top_k)
 
@@ -103,7 +103,7 @@ def handle_request(req: dict) -> dict:
     elif method == "tools/call":
         params = req.get("params", {})
         args = params.get("arguments", {})
-        return search(args.get("query", ""), args.get("top_k", 3))
+        return search(args.get("query", ""), args.get("top_k", 5))
     else:
         return {}
 

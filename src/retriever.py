@@ -138,7 +138,7 @@ class AdvancedRetriever:
     def search(
         self,
         query: str,
-        top_k: int = 3,
+        top_k: int = 5,
         use_reranking: bool = False,
     ) -> list[RetrievalResult]:
         """Advanced Hybrid Search를 수행한다."""
@@ -149,15 +149,16 @@ class AdvancedRetriever:
             parents_col = self.chroma.get_collection(
                 "parents", embedding_function=_noop_ef,
             )
-        except Exception:
+        except Exception as e:
+            print(f"  [Retriever] 컬렉션 로딩 실패: {e}")
             return []
 
         # BM25 인덱스 구축 (최초 1회)
         if not self._bm25_indexed:
             self._build_bm25_index(children_col)
 
-        # 검색 후보 수 (RRF 합산 전)
-        candidate_k = min(top_k * 3, 10)
+        # 검색 후보 수 (RRF 합산 전) — 더 넓은 후보군 확보
+        candidate_k = min(top_k * 4, 20)
 
         # 1. Vector Search
         query_embedding = self.embedder.encode(query).tolist()
@@ -243,8 +244,8 @@ class AdvancedRetriever:
                     parent_data = parents_col.get(ids=[parent_id])
                     if parent_data["documents"]:
                         parent_content = parent_data["documents"][0]
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"  [Retriever] Parent 조회 실패 (parent_id={parent_id}): {e}")
 
             results.append(RetrievalResult(
                 content=data["content"],
@@ -279,8 +280,8 @@ class AdvancedRetriever:
                 })
             self.bm25.index(documents)
             self._bm25_indexed = True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  [Retriever] BM25 인덱스 구축 실패: {e}")
 
     def _llm_rerank(self, query: str, results: list[RetrievalResult]) -> list[RetrievalResult]:
         """LLM으로 검색 결과의 관련도를 재정렬한다."""
@@ -320,7 +321,7 @@ JSON만 출력하세요."""
                     results[idx].rerank_score = ranking.get("relevance", "MEDIUM")
 
             results.sort(key=lambda r: relevance_order.get(r.rerank_score, 1))
-        except Exception:
-            pass  # reranking 실패 시 RRF 순서 유지
+        except Exception as e:
+            print(f"  [Retriever] LLM Reranking 실패 (RRF 순서 유지): {e}")
 
         return results
