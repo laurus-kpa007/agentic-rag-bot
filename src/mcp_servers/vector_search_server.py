@@ -12,6 +12,7 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
+VERBOSE = os.getenv("RETRIEVER_VERBOSE", "").lower() in ("1", "true", "yes")
 
 # Lazy 초기화 (서버 시작 시가 아니라 첫 검색 호출 시 로딩)
 _embedder = None
@@ -42,6 +43,7 @@ def _get_retriever():
         _retriever = AdvancedRetriever(
             chroma_client=_get_chroma(),
             embedder=_get_embedder(),
+            verbose=VERBOSE,
         )
     return _retriever
 

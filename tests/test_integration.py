@@ -1,6 +1,9 @@
 """통합 테스트 - 전체 파이프라인 E2E 흐름
 
 Ollama 실제 서버 없이 Mock LLM으로 전체 파이프라인을 검증한다.
+
+핵심 변경: Planner 쿼리로 직접 MCP 검색 → LLM은 답변 생성만 수행.
+기존 Agent의 tool_call 루프를 거치지 않으므로 LLM 호출 횟수가 줄어듦.
 """
 
 import json
@@ -56,10 +59,14 @@ class TestIntegrationChitchat:
 
 
 class TestIntegrationInternalSearch:
-    """INTERNAL_SEARCH 경로 통합 테스트"""
+    """INTERNAL_SEARCH 경로 통합 테스트
+
+    새 흐름: Router → Planner → 직접 MCP 검색 → answer_with_context → Grader
+    LLM 호출: Router(1) + Planner(1) + answer_with_context(1) + Grader(1) = 4회
+    """
 
     def test_internal_search_pass_flow(self):
-        """사내 검색 → Router → Planner → Agent(도구호출) → Grader(PASS) → 답변."""
+        """사내 검색 → Router → Planner → 직접검색 → 답변생성 → Grader(PASS)."""
         plan_json = json.dumps({
             "intent": "휴가 신청 방법",
             "keywords": ["휴가", "신청"],
@@ -70,9 +77,8 @@ class TestIntegrationInternalSearch:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),    # Router
             make_text_response(plan_json),             # Planner
-            # Agent: 도구 호출 → 결과 → 최종 답변
-            make_tool_response("vector-search__search_vector_db", {"query": "휴가 신청 절차"}),
-            make_text_response("휴가 신청은 HR 포털에서 가능합니다."),
+            # 직접 검색은 MCP mock이 처리 (LLM 호출 없음)
+            make_text_response("휴가 신청은 HR 포털에서 가능합니다."),  # answer_with_context
             make_text_response("PASS"),                # Grader
         ]
         components = _make_pipeline(llm_responses)
@@ -86,7 +92,7 @@ class TestIntegrationInternalSearch:
         assert "휴가" in answer
 
     def test_internal_search_fail_rewrite_flow(self):
-        """사내 검색 → Grader FAIL → Rewriter → 재검색 → 답변."""
+        """사내 검색 → Grader FAIL → Rewriter → 직접 재검색 → 답변."""
         plan_json = json.dumps({
             "intent": "출장비 정산",
             "keywords": ["출장비"],
@@ -97,14 +103,12 @@ class TestIntegrationInternalSearch:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),   # Router
             make_text_response(plan_json),            # Planner
-            # 1차 Agent: 도구 호출 → 답변
-            make_tool_response("vector-search__search_vector_db", {"query": "출장비 정산 방법"}),
-            make_text_response("관련 없는 답변입니다."),
+            # 직접 검색 (MCP mock)
+            make_text_response("관련 없는 답변입니다."),  # answer_with_context (1차)
             make_text_response("FAIL"),              # Grader: FAIL
             make_text_response("출장 경비 정산 절차 비용 처리"),  # Rewriter
-            # 2차 Agent: 재검색
-            make_tool_response("vector-search__search_vector_db", {"query": "출장 경비"}),
-            make_text_response("출장비는 ERP 시스템에서 정산합니다."),
+            # 직접 재검색 (MCP mock)
+            make_text_response("출장비는 ERP 시스템에서 정산합니다."),  # answer_with_context (2차)
         ]
         components = _make_pipeline(llm_responses)
 
@@ -121,7 +125,7 @@ class TestIntegrationWebSearch:
     """WEB_SEARCH 경로 통합 테스트"""
 
     def test_web_search_flow(self):
-        """웹 검색 → Router → Planner → Agent(web_search) → Grader(PASS) → 답변."""
+        """웹 검색 → Router → Planner → 직접검색 → 답변생성 → Grader(PASS)."""
         plan_json = json.dumps({
             "intent": "날씨 확인",
             "keywords": ["서울", "날씨"],
@@ -132,8 +136,8 @@ class TestIntegrationWebSearch:
         llm_responses = [
             make_text_response("WEB_SEARCH"),        # Router
             make_text_response(plan_json),            # Planner
-            make_tool_response("web-search__web_search", {"query": "서울 오늘 날씨"}),
-            make_text_response("오늘 서울은 맑고 기온 15도입니다."),
+            # 직접 검색 (MCP mock)
+            make_text_response("오늘 서울은 맑고 기온 15도입니다."),  # answer_with_context
             make_text_response("PASS"),              # Grader
         ]
         components = _make_pipeline(llm_responses)
@@ -151,7 +155,7 @@ class TestIntegrationMultiQuery:
     """MULTI 전략 통합 테스트"""
 
     def test_multi_query_search(self):
-        """복합 질문 → Planner(MULTI) → 2회 검색 → 병합 → 답변."""
+        """복합 질문 → Planner(MULTI) → 2개 쿼리 직접검색 → 병합 → 답변."""
         plan_json = json.dumps({
             "intent": "휴가와 출장비 동시 확인",
             "keywords": ["휴가", "출장비"],
@@ -162,12 +166,8 @@ class TestIntegrationMultiQuery:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),    # Router
             make_text_response(plan_json),             # Planner
-            # 1차 검색: 휴가
-            make_tool_response("vector-search__search_vector_db", {"query": "휴가 규정"}),
-            make_text_response("휴가는 연 15일입니다."),
-            # 2차 검색: 출장비
-            make_tool_response("vector-search__search_vector_db", {"query": "출장비"}),
-            make_text_response("출장비는 ERP로 정산합니다."),
+            # 2개 쿼리 직접 검색 (MCP mock → 병합)
+            make_text_response("휴가는 연 15일, 출장비는 ERP로 정산합니다."),  # answer_with_context
             make_text_response("PASS"),               # Grader
         ]
         components = _make_pipeline(llm_responses)
@@ -196,8 +196,7 @@ class TestIntegrationHITL:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),
             make_text_response(plan_json),
-            make_tool_response("vector-search__search_vector_db", {"query": "test"}),
-            make_text_response("좋은 답변입니다."),
+            make_text_response("좋은 답변입니다."),  # answer_with_context
             make_text_response("PASS"),
         ]
         components = _make_pipeline(llm_responses, hitl_mode="auto")
@@ -222,7 +221,7 @@ class TestIntegrationHITL:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),
             make_text_response(plan_json),
-            make_text_response("답변"),  # Agent: 도구 없이 직접 답변
+            make_text_response("답변"),  # answer_with_context
             make_text_response("PASS"),
         ]
         components = _make_pipeline(llm_responses, hitl_mode="off")
@@ -251,7 +250,7 @@ class TestIntegrationConversationHistory:
         llm_responses = [
             make_text_response("INTERNAL_SEARCH"),
             make_text_response(plan_json),
-            make_text_response("이전에 물어본 휴가 정보입니다."),
+            make_text_response("이전에 물어본 휴가 정보입니다."),  # answer_with_context
             make_text_response("PASS"),
         ]
         components = _make_pipeline(llm_responses)
@@ -268,3 +267,48 @@ class TestIntegrationConversationHistory:
         )
 
         assert answer  # 답변이 반환됨
+
+
+class TestDirectSearchHelpers:
+    """직접 검색 헬퍼 함수 테스트"""
+
+    def test_find_search_tool_internal(self):
+        """INTERNAL_SEARCH 라우트에서 vector search 도구를 찾는다."""
+        from src.main import _find_search_tool
+        mcp = make_mock_mcp()
+        tool = _find_search_tool(mcp, "INTERNAL_SEARCH")
+        assert tool == "vector-search__search_vector_db"
+
+    def test_find_search_tool_web(self):
+        """WEB_SEARCH 라우트에서 web search 도구를 찾는다."""
+        from src.main import _find_search_tool
+        mcp = make_mock_mcp()
+        tool = _find_search_tool(mcp, "WEB_SEARCH")
+        assert tool == "web-search__web_search"
+
+    def test_parse_mcp_results(self):
+        """MCP 결과 JSON을 문서 리스트로 파싱한다."""
+        from src.main import _parse_mcp_results
+        docs = [{"content": "test", "distance": 0.1}]
+        result_json = json.dumps({
+            "content": [{"type": "text", "text": json.dumps(docs)}]
+        })
+        parsed = _parse_mcp_results(result_json)
+        assert len(parsed) == 1
+        assert parsed[0]["content"] == "test"
+
+    def test_parse_mcp_results_invalid(self):
+        """잘못된 JSON → 빈 리스트 반환."""
+        from src.main import _parse_mcp_results
+        assert _parse_mcp_results("invalid json") == []
+
+    def test_dedup_documents(self):
+        """문서 중복 제거."""
+        from src.main import _dedup_documents
+        docs = [
+            {"content": "같은 문서입니다. 내용이 동일합니다." * 5},
+            {"content": "같은 문서입니다. 내용이 동일합니다." * 5},
+            {"content": "다른 문서입니다."},
+        ]
+        result = _dedup_documents(docs)
+        assert len(result) == 2
