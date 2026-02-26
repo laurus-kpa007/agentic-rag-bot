@@ -53,7 +53,7 @@ class MCPClient:
                     stdout=subprocess.PIPE,
                     stderr=None,  # MCP 서버 stderr을 터미널에 표시 (디버그 로그용)
                     cwd=self.project_root,
-                    env={**os.environ, **cfg.get("env", {})},
+                    env={**os.environ, "PYTHONUNBUFFERED": "1", **cfg.get("env", {})},
                 )
                 self.servers[name] = proc
 
