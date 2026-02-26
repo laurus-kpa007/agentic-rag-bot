@@ -15,6 +15,14 @@ if _PROJECT_ROOT not in sys.path:
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
+# Windows CP949 → UTF-8 인코딩 강제 (UnicodeDecodeError 방지)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 CHROMA_DIR = os.path.abspath(os.getenv("CHROMA_PERSIST_DIR", "./data/chroma"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
 VERBOSE = os.getenv("RETRIEVER_VERBOSE", "").lower() in ("1", "true", "yes")

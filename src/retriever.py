@@ -175,7 +175,7 @@ class AdvancedRetriever:
                 "parents", embedding_function=_noop_ef,
             )
         except Exception as e:
-            print(f"  [Retriever] 컬렉션 로딩 실패: {e}")
+            print(f"  [Retriever] 컬렉션 로딩 실패: {e}", file=sys.stderr)
             return []
 
         # BM25 인덱스 구축 (최초 1회)
@@ -280,7 +280,7 @@ class AdvancedRetriever:
                     if parent_data["documents"]:
                         parent_content = parent_data["documents"][0]
                 except Exception as e:
-                    print(f"  [Retriever] Parent 조회 실패 (parent_id={parent_id}): {e}")
+                    print(f"  [Retriever] Parent 조회 실패 (parent_id={parent_id}): {e}", file=sys.stderr)
 
             results.append(RetrievalResult(
                 content=data["content"],
@@ -333,7 +333,7 @@ class AdvancedRetriever:
             self.bm25.index(documents)
             self._bm25_indexed = True
         except Exception as e:
-            print(f"  [Retriever] BM25 인덱스 구축 실패: {e}")
+            print(f"  [Retriever] BM25 인덱스 구축 실패: {e}", file=sys.stderr)
 
     @staticmethod
     def _strip_contextual_header(text: str) -> str:
@@ -379,6 +379,6 @@ JSON만 출력하세요."""
 
             results.sort(key=lambda r: relevance_order.get(r.rerank_score, 1))
         except Exception as e:
-            print(f"  [Retriever] LLM Reranking 실패 (RRF 순서 유지): {e}")
+            print(f"  [Retriever] LLM Reranking 실패 (RRF 순서 유지): {e}", file=sys.stderr)
 
         return results
