@@ -32,16 +32,16 @@ def _get_chroma():
     global _chroma
     if _chroma is None:
         import chromadb
-        print(f"  [MCP:vector-search] ChromaDB 경로: {CHROMA_DIR}", file=sys.stderr)
-        print(f"  [MCP:vector-search] CWD: {os.getcwd()}", file=sys.stderr)
+        print(f"  [MCP:vector-search] ChromaDB 경로: {CHROMA_DIR}", file=sys.stderr, flush=True)
+        print(f"  [MCP:vector-search] CWD: {os.getcwd()}", file=sys.stderr, flush=True)
         _chroma = chromadb.PersistentClient(path=CHROMA_DIR)
         # 컬렉션 상태 확인
         try:
             cols = _chroma.list_collections()
             for col in cols:
-                print(f"  [MCP:vector-search] 컬렉션 '{col.name}': {col.count()}건", file=sys.stderr)
+                print(f"  [MCP:vector-search] 컬렉션 '{col.name}': {col.count()}건", file=sys.stderr, flush=True)
         except Exception as e:
-            print(f"  [MCP:vector-search] 컬렉션 확인 실패: {e}", file=sys.stderr)
+            print(f"  [MCP:vector-search] 컬렉션 확인 실패: {e}", file=sys.stderr, flush=True)
     return _chroma
 
 
@@ -136,7 +136,7 @@ if __name__ == "__main__":
             sys.stdout.flush()
         except Exception as e:
             import traceback
-            print(f"  [MCP:vector-search] ERROR: {e}", file=sys.stderr)
+            print(f"  [MCP:vector-search] ERROR: {e}", file=sys.stderr, flush=True)
             traceback.print_exc(file=sys.stderr)
             error_resp = {
                 "jsonrpc": "2.0",
