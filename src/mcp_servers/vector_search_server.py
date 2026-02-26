@@ -10,7 +10,7 @@ import sys
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
-CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
+CHROMA_DIR = os.path.abspath(os.getenv("CHROMA_PERSIST_DIR", "./data/chroma"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bona/bge-m3-korean:latest")
 VERBOSE = os.getenv("RETRIEVER_VERBOSE", "").lower() in ("1", "true", "yes")
 
@@ -32,7 +32,16 @@ def _get_chroma():
     global _chroma
     if _chroma is None:
         import chromadb
+        print(f"  [MCP:vector-search] ChromaDB 경로: {CHROMA_DIR}", file=sys.stderr)
+        print(f"  [MCP:vector-search] CWD: {os.getcwd()}", file=sys.stderr)
         _chroma = chromadb.PersistentClient(path=CHROMA_DIR)
+        # 컬렉션 상태 확인
+        try:
+            cols = _chroma.list_collections()
+            for col in cols:
+                print(f"  [MCP:vector-search] 컬렉션 '{col.name}': {col.count()}건", file=sys.stderr)
+        except Exception as e:
+            print(f"  [MCP:vector-search] 컬렉션 확인 실패: {e}", file=sys.stderr)
     return _chroma
 
 
