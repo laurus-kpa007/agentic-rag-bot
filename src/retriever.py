@@ -19,9 +19,22 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 
 class _NoOpEF:
-    """chromadb 기본 EF(onnx 다운로드)를 방지하는 더미."""
+    """chromadb 기본 EF(onnx 다운로드)를 방지하는 더미.
 
-    name = "noop"
+    chromadb 0.5+ EmbeddingFunction 프로토콜에 맞춰
+    name(), build_from_config(), get_config()를 구현한다.
+    """
+
+    @staticmethod
+    def name() -> str:
+        return "noop"
+
+    @staticmethod
+    def build_from_config(config):
+        return _NoOpEF()
+
+    def get_config(self):
+        return {}
 
     def __call__(self, input):
         return [[0.0] * 10 for _ in input]

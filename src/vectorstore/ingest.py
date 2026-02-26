@@ -25,6 +25,17 @@ class _NoOpEmbeddingFunction(chromadb.EmbeddingFunction):
     def __init__(self):
         pass
 
+    @staticmethod
+    def name() -> str:
+        return "noop"
+
+    @staticmethod
+    def build_from_config(config):
+        return _NoOpEmbeddingFunction()
+
+    def get_config(self):
+        return {}
+
     def __call__(self, input):
         return [[0.0] * 10 for _ in input]
 
