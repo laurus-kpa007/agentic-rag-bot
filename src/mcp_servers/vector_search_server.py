@@ -8,6 +8,11 @@ import json
 import os
 import sys
 
+# 프로젝트 루트를 sys.path에 추가하여 'from src.xxx import ...' 가 동작하도록 한다.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 CHROMA_DIR = os.path.abspath(os.getenv("CHROMA_PERSIST_DIR", "./data/chroma"))
